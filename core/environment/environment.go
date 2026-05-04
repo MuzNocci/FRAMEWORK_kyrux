@@ -27,8 +27,13 @@ func Load(path string) error {
 			value = value[:idx]
 		}
 		value = strings.TrimSpace(value)
-		loaded[key] = value
-		os.Setenv(key, value)
+		// Respeita vars já definidas no ambiente (ex: CI, testes, Docker).
+		if existing := os.Getenv(key); existing != "" {
+			loaded[key] = existing
+		} else {
+			loaded[key] = value
+			os.Setenv(key, value)
+		}
 	}
 	return nil
 }

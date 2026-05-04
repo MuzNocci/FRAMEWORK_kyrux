@@ -47,6 +47,9 @@ type SecuritySettings struct {
 	AllowedHost []string
 }
 
+// InstalledApps é preenchido pelo core/apps/installed.go do projeto via init().
+var InstalledApps []string
+
 func intOr(s string, fallback int) int {
 	if n, err := strconv.Atoi(s); err == nil && n > 0 {
 		return n
@@ -69,13 +72,15 @@ func parseHosts(s string) []string {
 }
 
 func Load() *Settings {
+	env := environment.GetOr("APP_ENV", "production")
+
 	return &Settings{
-		InstalledApps: []string{},
+		InstalledApps: InstalledApps,
 		App: AppSettings{
 			Name:    "kyrux",
 			Version: "0.1.0",
-			Env:     environment.GetOr("APP_ENV", "production"),
-			Debug:   environment.GetOr("APP_ENV", "production") == "development",
+			Env:     env,
+			Debug:   env == "development",
 		},
 		Server: ServerSettings{
 			Host:    environment.GetOr("SERVER_HOST", "0.0.0.0"),
@@ -94,7 +99,7 @@ func Load() *Settings {
 		},
 		Security: SecuritySettings{
 			SecretKey:   environment.GetOr("SECRET_KEY", "change-me"),
-			SessionTTL:  3600,
+			SessionTTL:  intOr(environment.Get("SESSION_TTL"), 3600),
 			AllowedHost: parseHosts(environment.Get("ALLOWED_HOSTS")),
 		},
 	}

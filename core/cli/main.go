@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +9,6 @@ import (
 )
 
 const installedFile = "core/apps/installed.go"
-const settingsFile = "core/settings/settings.go"
 
 func Run(args []string) {
 	if len(args) < 1 {
@@ -54,7 +52,7 @@ func printUsage() {
 	fmt.Println("  removeapp <nome>   remove um app existente")
 }
 
-// ── startapp ─────────────────────────────────────────────────────────────────
+// ── startapp ──────────────────────────────────────────────────────────────────
 
 func startApp(name string) error {
 	base := filepath.Join("apps", name)
@@ -95,19 +93,15 @@ func startApp(name string) error {
 		}
 	}
 
-	if err := addInstalledImport(name); err != nil {
+	if err := addToInstalled(name); err != nil {
 		return fmt.Errorf("atualizar %s: %w", installedFile, err)
-	}
-
-	if err := addInstalledApp(name); err != nil {
-		return fmt.Errorf("atualizar %s: %w", settingsFile, err)
 	}
 
 	fmt.Printf("app '%s' criado em %s\n", name, base)
 	return nil
 }
 
-// ── removeapp ────────────────────────────────────────────────────────────────
+// ── removeapp ─────────────────────────────────────────────────────────────────
 
 func removeApp(name string) error {
 	base := filepath.Join("apps", name)
@@ -130,166 +124,78 @@ func removeApp(name string) error {
 		return fmt.Errorf("remover %s: %w", base, err)
 	}
 
-	if err := removeInstalledImport(name); err != nil {
+	if err := removeFromInstalled(name); err != nil {
 		return fmt.Errorf("atualizar %s: %w", installedFile, err)
-	}
-
-	if err := removeInstalledApp(name); err != nil {
-		return fmt.Errorf("atualizar %s: %w", settingsFile, err)
 	}
 
 	fmt.Printf("app '%s' removido.\n", name)
 	return nil
 }
 
-// ── installed.go ─────────────────────────────────────────────────────────────
+// ── installed.go ──────────────────────────────────────────────────────────────
 
-func addInstalledImport(name string) error {
-	line := fmt.Sprintf("\t_ \"kyrux/apps/%s\"", name)
+// parseInstalledApps lê os apps registrados no installed.go a partir das linhas de import.
+func parseInstalledApps() []string {
 	content, err := os.ReadFile(installedFile)
 	if err != nil {
-		return err
+		return nil
 	}
-	if !strings.Contains(string(content), "import (") {
-		block := "\nimport (\n" + line + "\n)\n"
-		return os.WriteFile(installedFile, append(bytes.TrimRight(content, "\n"), []byte(block)...), 0600)
-	}
-	return addLineBeforeClosing(installedFile, ")", line)
-}
-
-func removeInstalledImport(name string) error {
-	line := fmt.Sprintf("\t_ \"kyrux/apps/%s\"", name)
-	if err := removeLine(installedFile, line); err != nil {
-		return err
-	}
-	return collapseImportIfEmpty(installedFile)
-}
-
-// collapseImportIfEmpty remove o bloco import() quando ele ficar vazio.
-func collapseImportIfEmpty(path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(content), "\n")
-	for i, l := range lines {
-		if strings.TrimSpace(l) != "import (" {
-			continue
-		}
-		for j := i + 1; j < len(lines); j++ {
-			t := strings.TrimSpace(lines[j])
-			if t == "" {
-				continue
-			}
-			if t == ")" {
-				start := i
-				if start > 0 && strings.TrimSpace(lines[start-1]) == "" {
-					start--
-				}
-				result := append(lines[:start:start], lines[j+1:]...)
-				return os.WriteFile(path, []byte(strings.Join(result, "\n")), 0600)
-			}
-			break
-		}
-	}
-	return nil
-}
-
-// ── settings.go ──────────────────────────────────────────────────────────────
-
-func addInstalledApp(name string) error {
-	content, err := os.ReadFile(settingsFile)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(content), "\n")
-	entry := fmt.Sprintf("\t\t\t\"%s\",", name)
-
-	for i, l := range lines {
-		if !strings.Contains(l, "InstalledApps:") {
-			continue
-		}
-		// Formato compacto: InstalledApps: []string{},
-		if strings.Contains(l, "[]string{}") {
-			indent := l[:strings.Index(l, "InstalledApps")]
-			expanded := []string{indent + "InstalledApps: []string{", entry, indent + "},"}
-			result := append(lines[:i:i], append(expanded, lines[i+1:]...)...)
-			return os.WriteFile(settingsFile, []byte(strings.Join(result, "\n")), 0644)
-		}
-		// Formato expandido: encontra o }, de fechamento
-		for j := i + 1; j < len(lines); j++ {
-			if strings.TrimSpace(lines[j]) == "}," {
-				lines = append(lines[:j:j], append([]string{entry}, lines[j:]...)...)
-				return os.WriteFile(settingsFile, []byte(strings.Join(lines, "\n")), 0600)
+	const prefix = `_ "kyrux/apps/`
+	var apps []string
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			name := strings.TrimSuffix(strings.TrimPrefix(line, prefix), `"`)
+			if name != "" {
+				apps = append(apps, name)
 			}
 		}
 	}
-	return fmt.Errorf("InstalledApps não encontrado em %s", settingsFile)
+	return apps
 }
 
-func removeInstalledApp(name string) error {
-	entry := fmt.Sprintf("\t\t\t\"%s\",", name)
-	if err := removeLine(settingsFile, entry); err != nil {
-		return err
-	}
-	return collapseInstalledAppsIfEmpty(settingsFile)
+func addToInstalled(name string) error {
+	return writeInstalledFile(append(parseInstalledApps(), name))
 }
 
-// collapseInstalledAppsIfEmpty converte InstalledApps: []string{\n},  de volta para []string{},
-func collapseInstalledAppsIfEmpty(path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(content), "\n")
-
-	for i, l := range lines {
-		if !strings.Contains(l, "InstalledApps:") || !strings.Contains(l, "[]string{") {
-			continue
-		}
-		if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == "}," {
-			indent := l[:strings.Index(l, "InstalledApps")]
-			result := append(lines[:i:i], append([]string{indent + "InstalledApps: []string{},"}, lines[i+2:]...)...)
-			return os.WriteFile(path, []byte(strings.Join(result, "\n")), 0600)
+func removeFromInstalled(name string) error {
+	current := parseInstalledApps()
+	filtered := current[:0]
+	for _, a := range current {
+		if a != name {
+			filtered = append(filtered, a)
 		}
 	}
-	return nil
+	return writeInstalledFile(filtered)
 }
 
-// ── helpers de arquivo ────────────────────────────────────────────────────────
+// writeInstalledFile regenera core/apps/installed.go com a lista de apps fornecida.
+// Com zero apps, escreve apenas o cabeçalho do pacote.
+func writeInstalledFile(apps []string) error {
+	var sb strings.Builder
+	sb.WriteString("package apps\n")
 
-// addLineBeforeClosing insere newLine antes da última ocorrência de closing.
-func addLineBeforeClosing(path, closing, newLine string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(content), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) == strings.TrimSpace(closing) {
-			lines = append(lines[:i], append([]string{newLine}, lines[i:]...)...)
-			break
+	if len(apps) > 0 {
+		sb.WriteString("\nimport (\n")
+		sb.WriteString("\t\"kyrux/core/settings\"\n")
+		sb.WriteString("\n")
+		for _, a := range apps {
+			fmt.Fprintf(&sb, "\t_ \"kyrux/apps/%s\"\n", a)
 		}
-	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
-}
-
-func removeLine(path, target string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(content), "\n")
-	result := lines[:0]
-	for _, l := range lines {
-		if strings.TrimSpace(l) != strings.TrimSpace(target) {
-			result = append(result, l)
+		sb.WriteString(")\n")
+		sb.WriteString("\nfunc init() {\n")
+		sb.WriteString("\tsettings.InstalledApps = []string{\n")
+		for _, a := range apps {
+			fmt.Fprintf(&sb, "\t\t\"%s\",\n", a)
 		}
+		sb.WriteString("\t}\n")
+		sb.WriteString("}\n")
 	}
-	return os.WriteFile(path, []byte(strings.Join(result, "\n")), 0600)
+
+	return os.WriteFile(installedFile, []byte(sb.String()), 0600)
 }
 
-// ── helpers de template ───────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 func title(s string) string {
 	if s == "" {
@@ -313,7 +219,7 @@ func writeTemplate(path, content string, data any) error {
 	return tpl.Execute(f, data)
 }
 
-// ── templates dos arquivos gerados ───────────────────────────────────────────
+// ── templates dos arquivos gerados ────────────────────────────────────────────
 
 var routesTpl = `package {{.Name}}
 
