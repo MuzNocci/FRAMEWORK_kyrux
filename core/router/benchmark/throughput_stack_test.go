@@ -1,4 +1,12 @@
-package bootstrap_test
+package benchmark_test
+
+// Layer 3 — Throughput: stack completo (bootstrap + apps + templates)
+//
+// Mede req/s com o servidor real em modo produção.
+// Requer ao menos um app instalado com rota GET /.
+//
+// Uso:
+//   go test ./core/router/benchmark/ -run TestThroughputStack -v -count=1
 
 import (
 	"fmt"
@@ -16,14 +24,12 @@ import (
 	"kyrux/core/render"
 )
 
-// TestThroughput mede req/s usando o stack completo do Kyrux (bootstrap + app + templates),
-// respeitando SERVER_WORKERS do .env via GOMAXPROCS.
-func TestThroughput(t *testing.T) {
+func TestThroughputStack(t *testing.T) {
 	os.Setenv("APP_ENV", "production")
 
-	render.AppsDir = "../../apps"
+	render.AppsDir = "../../../apps"
 
-	fw, err := bootstrap.Init("../../.env")
+	fw, err := bootstrap.Init("../../../.env")
 	if err != nil {
 		t.Fatalf("bootstrap.Init: %v", err)
 	}

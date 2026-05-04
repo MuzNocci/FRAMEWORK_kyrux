@@ -1,4 +1,12 @@
-package router_test
+package benchmark_test
+
+// Layer 3 — Throughput: router puro (sem bootstrap, sem templates)
+//
+// Mede req/s via TCP real respeitando SERVER_WORKERS do .env.
+// Útil para detectar regressões no stack de rede do router.
+//
+// Uso:
+//   go test ./core/router/benchmark/ -run TestThroughputRouter -v -count=1
 
 import (
 	"fmt"
@@ -15,10 +23,8 @@ import (
 	"kyrux/core/router"
 )
 
-// TestThroughput mede requisições por segundo usando um servidor TCP real,
-// respeitando SERVER_WORKERS do .env via GOMAXPROCS.
-func TestThroughput(t *testing.T) {
-	_ = environment.Load("../../.env")
+func TestThroughputRouter(t *testing.T) {
+	_ = environment.Load("../../../.env")
 
 	workers := 4
 	if s := environment.Get("SERVER_WORKERS"); s != "" {
@@ -53,7 +59,6 @@ func TestThroughput(t *testing.T) {
 
 	base := "http://" + ln.Addr().String()
 
-	// aquece o pool de conexões
 	warmupClient := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: workers * 8}}
 	for i := 0; i < workers*10; i++ {
 		resp, err := warmupClient.Get(base + "/ping/")
@@ -61,6 +66,12 @@ func TestThroughput(t *testing.T) {
 			resp.Body.Close()
 		}
 	}
+
+	const (
+		duration   = 5 * time.Second
+		goroutines = 8
+	)
+	concurrency := workers * goroutines
 
 	type scenario struct {
 		name string
@@ -71,15 +82,8 @@ func TestThroughput(t *testing.T) {
 		{"rota dinâmica  GET /usuarios/42/", base + "/usuarios/42/"},
 	}
 
-	const (
-		duration    = 5 * time.Second
-		goroutines  = 8 // goroutines por worker — simula pressão concorrente real
-	)
-
-	concurrency := workers * goroutines
-
 	fmt.Printf("\n╔══════════════════════════════════════════════════════╗\n")
-	fmt.Printf("║         Kyrux — Teste de Throughput (req/s)          ║\n")
+	fmt.Printf("║         Kyrux — Throughput (router puro)             ║\n")
 	fmt.Printf("╠══════════════════════════════════════════════════════╣\n")
 	fmt.Printf("║  Workers (GOMAXPROCS): %-4d                          ║\n", workers)
 	fmt.Printf("║  Goroutines clientes:  %-4d (%d por worker)          ║\n", concurrency, goroutines)

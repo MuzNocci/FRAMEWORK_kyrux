@@ -1219,6 +1219,76 @@ Zero falhas em 200.000 requisições totais.
 > Medido em localhost com `SERVER_WORKERS=4`, respeitando a configuração do `.env`.
 > Resultados variam conforme hardware e carga de trabalho da view.
 
+### Rodando os testes de performance
+
+Todos os benchmarks ficam em `core/router/benchmark/` e estão organizados em três camadas.
+
+#### Layer 1 — Microbenchmark (custo de registro de rotas)
+
+```bash
+go test ./core/router/benchmark/ -bench='^Benchmark(Router|Handle)' -benchmem -benchtime=3s -run='^$'
+```
+
+Mede apenas o custo de registrar rotas via API pública — sem request, sem TCP.
+
+#### Layer 2 — Framework benchmark (router + middleware, sem TCP)
+
+```bash
+go test ./core/router/benchmark/ -bench='^Benchmark(Route|Middleware|Parallel)' -benchmem -benchtime=3s -run='^$'
+```
+
+Usa `httptest.NewRecorder` — elimina overhead de rede. Referência para custo relativo entre tipos de rota e chains de middleware.
+
+#### Layer 2 — Regressão automática
+
+```bash
+go test ./core/router/benchmark/ -run TestRegressionCheck -v -count=1
+```
+
+Falha se qualquer cenário regredir mais de 5% em relação ao baseline. Atualizar as constantes em `bench_regression_test.go` após otimizações intencionais ou troca de hardware.
+
+#### Layer 3 — Throughput via Go client
+
+```bash
+# Router puro (sem bootstrap, sem templates)
+go test ./core/router/benchmark/ -run TestThroughputRouter -v -count=1
+
+# Stack completo (bootstrap + apps + templates) — requer ao menos um app com rota GET /
+go test ./core/router/benchmark/ -run TestThroughputStack -v -count=1
+```
+
+Ambos sobem um servidor real em porta aleatória, disparam requisições por 5 s com múltiplas goroutines e reportam req/s. `TestThroughputStack` força `APP_ENV=production` automaticamente.
+
+> **Nunca usar `./...` para os testes de throughput** — pacotes rodando em paralelo dividem CPU artificialmente e distorcem os resultados.
+
+#### Layer 3 — Throughput via `ab` (capacidade máxima)
+
+```bash
+# 1. Subir o servidor de benchmark
+go run /tmp/kyrux_bench_server.go &
+
+# 2. Rodar os testes
+ab -n 50000 -c 100 -k http://127.0.0.1:8000/ping/
+ab -n 50000 -c 100 -k http://127.0.0.1:8000/usuarios/42/
+ab -n 50000 -c 100 -k "http://127.0.0.1:8000/busca/?q=kyrux&page=3"
+ab -n 50000 -c 500 -k http://127.0.0.1:8000/ping/   # teste de pico
+
+# 3. Encerrar o servidor — SEMPRE ao final
+kill $(lsof -ti :8000) 2>/dev/null
+```
+
+O servidor de benchmark (`/tmp/kyrux_bench_server.go`) usa `runtime.GOMAXPROCS(4)` e registra três rotas (estática, path param, query string). O template completo está em `.claude/performance_testing.md`.
+
+| Camada | req/s típico | O que mede |
+|---|---|---|
+| Layer 1 — registro | sub-µs por rota | Custo da primitiva, sem request |
+| Layer 2 — framework (`-bench`) | ~433k–592k | Router + handler, sem syscall de rede |
+| Layer 2 — regressão | ~620k–1.2M | Mesmo código, contexto mais aquecido |
+| Layer 3 — Go client | ~15k–18k | Throughput real com overhead de `net/http` |
+| Layer 3 — `ab` | ~120k–220k | Capacidade máxima com cliente C otimizado |
+
+Não comparar números entre camadas — cada uma mede uma coisa diferente.
+
 ---
 
 ## Referência Rápida

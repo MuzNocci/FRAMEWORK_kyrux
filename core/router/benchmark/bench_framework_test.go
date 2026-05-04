@@ -1,4 +1,9 @@
-package router_test
+package benchmark_test
+
+// Layer 2 — Framework benchmark
+//
+// Mede o router + middleware com httptest.NewRecorder (sem TCP).
+// Referência para comparar custo relativo entre tipos de rota e chains de middleware.
 
 import (
 	"net/http"
@@ -8,10 +13,8 @@ import (
 	"kyrux/core/router"
 )
 
-// ─── cenários ────────────────────────────────────────────────────────────────
-
 func BenchmarkRouteStatic(b *testing.B) {
-	r := newRouter()
+	r := router.New()
 	r.Handle("GET /ping/", func(ctx *router.Context) {
 		ctx.JSON(http.StatusOK, map[string]string{"pong": "true"})
 	})
@@ -25,7 +28,7 @@ func BenchmarkRouteStatic(b *testing.B) {
 }
 
 func BenchmarkRoutePathParam(b *testing.B) {
-	r := newRouter()
+	r := router.New()
 	r.Handle("GET /usuarios/<id:int>/", func(ctx *router.Context) {
 		ctx.JSON(http.StatusOK, map[string]string{"id": ctx.Param("id")})
 	})
@@ -39,7 +42,7 @@ func BenchmarkRoutePathParam(b *testing.B) {
 }
 
 func BenchmarkRouteQueryString(b *testing.B) {
-	r := newRouter()
+	r := router.New()
 	r.Handle("GET /busca/", func(ctx *router.Context) {
 		q := ctx.Query("q")
 		page := ctx.QueryInt("page", 1)
@@ -55,7 +58,7 @@ func BenchmarkRouteQueryString(b *testing.B) {
 }
 
 func BenchmarkMiddleware1(b *testing.B) {
-	r := newRouter()
+	r := router.New()
 	r.Use(func(next router.HandlerFunc) router.HandlerFunc {
 		return func(ctx *router.Context) {
 			ctx.Set("req_id", "abc123")
@@ -75,15 +78,13 @@ func BenchmarkMiddleware1(b *testing.B) {
 }
 
 func BenchmarkMiddleware3(b *testing.B) {
-	r := newRouter()
-	addMW := func(key, val string) {
+	r := router.New()
+	for _, kv := range [][2]string{{"a", "1"}, {"b", "2"}, {"c", "3"}} {
+		k, v := kv[0], kv[1]
 		r.Use(func(next router.HandlerFunc) router.HandlerFunc {
-			return func(ctx *router.Context) { ctx.Set(key, val); next(ctx) }
+			return func(ctx *router.Context) { ctx.Set(k, v); next(ctx) }
 		})
 	}
-	addMW("a", "1")
-	addMW("b", "2")
-	addMW("c", "3")
 	r.Handle("GET /ping/", func(ctx *router.Context) {
 		ctx.JSON(http.StatusOK, nil)
 	})
@@ -97,7 +98,7 @@ func BenchmarkMiddleware3(b *testing.B) {
 }
 
 func BenchmarkRoute404(b *testing.B) {
-	r := newRouter()
+	r := router.New()
 	r.Handle("GET /existe/", func(ctx *router.Context) {
 		ctx.JSON(http.StatusOK, nil)
 	})
@@ -111,7 +112,7 @@ func BenchmarkRoute404(b *testing.B) {
 }
 
 func BenchmarkParallelStatic(b *testing.B) {
-	r := newRouter()
+	r := router.New()
 	r.Handle("GET /ping/", func(ctx *router.Context) {
 		ctx.JSON(http.StatusOK, map[string]string{"pong": "true"})
 	})
@@ -127,7 +128,7 @@ func BenchmarkParallelStatic(b *testing.B) {
 }
 
 func BenchmarkParallelPathParam(b *testing.B) {
-	r := newRouter()
+	r := router.New()
 	r.Handle("GET /usuarios/<id:int>/", func(ctx *router.Context) {
 		ctx.JSON(http.StatusOK, map[string]string{"id": ctx.Param("id")})
 	})
