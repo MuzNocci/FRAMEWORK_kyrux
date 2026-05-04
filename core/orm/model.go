@@ -2,6 +2,7 @@ package orm
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -13,6 +14,7 @@ type Field struct {
 	Column  string
 	IsPK    bool
 	GoIndex int
+	Size    int // kyrux:"size:N" — usado por migrations
 }
 
 // ModelMeta contém os metadados pré-computados de um model.
@@ -67,6 +69,8 @@ func buildMeta(t reflect.Type) *ModelMeta {
 				f.IsPK = true
 			case strings.HasPrefix(part, "column:"):
 				f.Column = strings.TrimPrefix(part, "column:")
+			case strings.HasPrefix(part, "size:"):
+				f.Size, _ = strconv.Atoi(strings.TrimPrefix(part, "size:"))
 			}
 		}
 		meta.Fields = append(meta.Fields, f)

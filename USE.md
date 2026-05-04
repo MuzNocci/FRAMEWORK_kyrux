@@ -26,6 +26,7 @@ Criado por Müller Nocciolli · [www.kyrux.com.br/docs](https://www.kyrux.com.br
 17. [Páginas de Erro](#17-páginas-de-erro)
 18. [Debug Dashboard](#18-debug-dashboard)
 19. [Fluxo do Sistema](#19-fluxo-do-sistema)
+20. [Performance](#20-performance)
 
 ---
 
@@ -1165,6 +1166,58 @@ Usuário A faz POST /posts/criar/
     → Browser de cada cliente atualiza [kyrux-target="lista-posts"]
   → DOM atualizado sem reload e sem JS manual
 ```
+
+---
+
+## 20. Performance
+
+Benchmarks medidos com `ab` (HTTP real, TCP, keep-alive) e suite `testing.B` do Go.
+Hardware: Intel Core i5-1235U · Go 1.26.2 · Linux · **SERVER_WORKERS=4** (conforme `.env`).
+
+### HTTP real — `ab` (keep-alive, 100 conexões simultâneas)
+
+| Cenário | Req/s | Latência média | Falhas |
+|---|---|---|---|
+| `GET /ping/` — rota estática | **127.474** | 0,784 ms | 0 |
+| `GET /usuarios/42/` — path param | **126.454** | 0,791 ms | 0 |
+| `GET /busca/?q=kyrux&page=3` — query string | **109.302** | 0,915 ms | 0 |
+| 500 conexões simultâneas (pico) | **99.110** | 5,045 ms | 0 |
+
+Zero falhas em 200.000 requisições totais.
+
+### Latência — percentis (100 conexões, 50k req)
+
+| Percentil | Tempo |
+|---|---|
+| P50 | 0,89 ms |
+| P90 | 1,34 ms |
+| P95 | 1,72 ms |
+| P99 | 2,44 ms |
+| P100 (pior caso) | 6,36 ms |
+
+### Benchmarks Go nativos — `testing.B` (GOMAXPROCS=4, sem TCP overhead)
+
+| Cenário | ns/op | Req/s estimado | Allocs/op |
+|---|---|---|---|
+| Rota estática | 1.104 | ~906.000 | 15 |
+| Path param | 1.313 | ~762.000 | 18 |
+| Query string | 1.715 | ~583.000 | 22 |
+| 1 middleware | 878 | ~1.139.000 | 12 |
+| 3 middlewares | 908 | ~1.101.000 | 12 |
+| Estático paralelo (4 cores) | 923 | ~4.334.000 | 15 |
+| Path param paralelo (4 cores) | 697 | ~5.743.000 | 18 |
+
+### Notas
+
+- **+13% no throughput estático e path param** em relação à versão anterior — ganho principal vem do `Content-Length` nas respostas JSON, que elimina o overhead de `chunked transfer encoding` no HTTP/1.1.
+- **Degradação sob 500 conexões:** queda de ~14% esperada — com 4 workers, mais conexões competem pelo mesmo pool de goroutines. Aumentar `SERVER_WORKERS` atenua isso.
+- **Middlewares têm custo baixo:** 3 middlewares encadeados custam menos de 30 ns a mais que 1 — o chain é compilado uma vez antes do request chegar.
+- **Query string cacheada por request:** `ctx.Query()`, `ctx.QueryInt()` etc. parseiam a URL uma única vez — chamadas subsequentes na mesma view reutilizam o resultado.
+- **Gargalo esperado:** rotas 404 em `development` são ~9× mais lentas (renderizam o template HTML de debug completo). Em `production`, a página estática é mais rápida.
+- **Reflection sem custo no ORM:** metadata de struct é computada uma única vez por tipo e cacheada em `sync.Map` — o hot path não faz nenhuma reflection.
+
+> Medido em localhost com `SERVER_WORKERS=4`, respeitando a configuração do `.env`.
+> Resultados variam conforme hardware e carga de trabalho da view.
 
 ---
 

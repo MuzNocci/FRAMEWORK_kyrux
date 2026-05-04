@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"kyrux/core/database"
+	"sort"
 	"strings"
 )
 
@@ -100,11 +101,17 @@ func (q *Query[T]) Update(values map[string]any) error {
 	if len(q.where) == 0 {
 		return fmt.Errorf("orm: update sem WHERE não é permitido")
 	}
-	setClauses := make([]string, 0, len(values))
-	args := make([]any, 0, len(values)+len(q.args))
-	for col, val := range values {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	setClauses := make([]string, 0, len(keys))
+	args := make([]any, 0, len(keys)+len(q.args))
+	for _, col := range keys {
 		setClauses = append(setClauses, col+" = ?")
-		args = append(args, val)
+		args = append(args, values[col])
 	}
 	args = append(args, q.args...)
 

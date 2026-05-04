@@ -11,6 +11,7 @@ import (
 )
 
 var ctxPool = sync.Pool{New: func() any { return &Context{} }}
+var cwPool = sync.Pool{New: func() any { return &codeWriter{} }}
 
 type HandlerFunc func(ctx *Context)
 
@@ -83,6 +84,7 @@ func (r *Router) Handle(pattern string, h HandlerFunc) {
 		ctx.Writer = w
 		ctx.Request = req
 		ctx.data = nil
+		ctx.query = nil
 		if len(paramNames) > 0 {
 			params := make(map[string]string, len(paramNames))
 			for _, name := range paramNames {
@@ -130,11 +132,16 @@ func (r *Router) HandlePrefix(prefix string, h http.Handler) {
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	cw := &codeWriter{ResponseWriter: w}
+	cw := cwPool.Get().(*codeWriter)
+	cw.ResponseWriter = w
+	cw.code = 0
+	cw.handlerRan = false
+	cw.intercepted = false
 	r.mux.ServeHTTP(cw, req)
 	if (cw.code == http.StatusNotFound || cw.code == http.StatusMethodNotAllowed) && !cw.handlerRan {
 		kyerrors.Render(w, req, cw.code)
 	}
+	cwPool.Put(cw)
 }
 
 // codeWriter intercepta WriteHeader para detectar 404/405 automáticos do ServeMux.

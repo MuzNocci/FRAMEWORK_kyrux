@@ -306,21 +306,45 @@ Exibe informações da aplicação, runtime Go (goroutines, heap, GC) e todas as
 
 ## PERFORMANCE:
 
-Benchmark com `bombardier`, 125 conexões simultâneas, 30 segundos,
-servindo uma página SSR completa com cadeia de middlewares (Recovery, AllowedHosts, CSRF):
+Benchmarks medidos com `ab` (HTTP real, TCP, keep-alive) e suite `testing.B` do Go.
+Hardware: Intel Core i5-1235U · Go 1.26.2 · Linux · **SERVER_WORKERS=4** (conforme `.env`).
+
+### HTTP real — ab (keep-alive, 100 conexões simultâneas)
 
 ```
-Req/s  (média)   78.500
-Req/s  (pico)   133.619
-Latência p50      1,06ms
-Latência p95      4,81ms
-Latência p99      8,76ms
-Erros                  0
-Throughput       431 MB/s
+GET /ping/          (estático)    127.474 req/s    0,784 ms/req    0 erros
+GET /usuarios/42/   (path param)  126.454 req/s    0,791 ms/req    0 erros
+GET /busca/?q=...   (query str)   109.302 req/s    0,915 ms/req    0 erros
+500 conexões        (pico)         99.110 req/s    5,045 ms/req    0 erros
 ```
 
-> Medido em localhost (cliente e servidor na mesma máquina).
-> Resultados variam conforme hardware e carga de trabalho da view.
+Zero falhas em 200.000 requisições totais.
+
+### Latência — percentis (100 conexões, 50k req)
+
+```
+P50    0,89 ms
+P90    1,34 ms
+P95    1,72 ms
+P99    2,44 ms
+P100   6,36 ms   (pior caso absoluto)
+```
+
+### Benchmarks Go nativos — testing.B (GOMAXPROCS=4, sem TCP overhead)
+
+```
+Rota estática      1104 ns/op      ~906.000 req/s    15 allocs
+Path param         1313 ns/op      ~762.000 req/s    18 allocs
+Query string       1715 ns/op      ~583.000 req/s    22 allocs
+1 middleware        878 ns/op    ~1.139.000 req/s    12 allocs
+3 middlewares       908 ns/op    ~1.101.000 req/s    12 allocs
+Estático paral.     923 ns/op    ~4.334.000 req/s    15 allocs
+Path param par.     697 ns/op    ~5.743.000 req/s    18 allocs
+```
+
+> Adicionar 3 middlewares custa menos de 30 ns em relação a 1 — o chain é compilado antes do request.
+> Respostas JSON incluem `Content-Length` — sem chunked transfer encoding no HTTP/1.1.
+> Medido em localhost com GOMAXPROCS=4, respeitando SERVER_WORKERS do `.env`.
 
 
 ## CONCEITO CHAVE:
