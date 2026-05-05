@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"runtime"
 	"strings"
@@ -67,6 +68,12 @@ func resolveTestURL(path string) string {
 
 func TestThroughputReal(t *testing.T) {
 	render.AppsDir = "../../../apps"
+
+	// Força production antes de environment.Load() — o package respeita vars já definidas.
+	// Valores fixos garantem que as verificações de segurança do bootstrap passam.
+	os.Setenv("APP_ENV", "production")
+	os.Setenv("SECRET_KEY", "kyrux-benchmark-secret-key-placeholder-32")
+	os.Setenv("PASSWORD_PEPPER", "kyrux-benchmark-pepper-placeholder-32ch")
 
 	fw, err := bootstrap.Init("../../../.env")
 	if err != nil {
@@ -131,8 +138,8 @@ func TestThroughputReal(t *testing.T) {
 	fmt.Printf("\n╔══════════════════════════════════════════════════════╗\n")
 	fmt.Printf("║    Kyrux — Throughput (rotas reais da aplicação)     ║\n")
 	fmt.Printf("╠══════════════════════════════════════════════════════╣\n")
-	fmt.Printf("║  Workers (GOMAXPROCS): %-4d                          ║\n", workers)
-	fmt.Printf("║  Goroutines clientes:  %-4d (%d por worker)          ║\n", concurrency, goroutines)
+	fmt.Printf("║  Workers (SERVER_WORKERS): %-4d                      ║\n", workers)
+	fmt.Printf("║  Goroutines clientes:      %-4d (%d por worker)      ║\n", concurrency, goroutines)
 	fmt.Printf("║  Duração por cenário:  %-4s                          ║\n", duration)
 	fmt.Printf("║  Rotas testadas:       %-4d                          ║\n", len(scenarios))
 	fmt.Printf("╚══════════════════════════════════════════════════════╝\n\n")

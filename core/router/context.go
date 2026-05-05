@@ -23,6 +23,8 @@ var jsonPool = sync.Pool{New: func() any {
 	return &jsonEnc{buf: b, enc: json.NewEncoder(b)}
 }}
 
+var dataPool = sync.Pool{New: func() any { return make(map[string]any, 4) }}
+
 type Context struct {
 	Writer  http.ResponseWriter
 	Request *http.Request
@@ -40,7 +42,7 @@ func (c *Context) SetParam(key, value string) {
 
 func (c *Context) Set(key string, value any) {
 	if c.data == nil {
-		c.data = make(map[string]any)
+		c.data = dataPool.Get().(map[string]any)
 	}
 	c.data[key] = value
 }

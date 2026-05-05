@@ -10,8 +10,9 @@ import (
 	"sync"
 )
 
-var ctxPool = sync.Pool{New: func() any { return &Context{} }}
-var cwPool = sync.Pool{New: func() any { return &codeWriter{} }}
+var ctxPool    = sync.Pool{New: func() any { return &Context{} }}
+var cwPool     = sync.Pool{New: func() any { return &codeWriter{} }}
+var paramsPool = sync.Pool{New: func() any { return make(map[string]string, 4) }}
 
 type HandlerFunc func(ctx *Context)
 
@@ -86,7 +87,8 @@ func (r *Router) Handle(pattern string, h HandlerFunc) {
 		ctx.data = nil
 		ctx.query = nil
 		if len(paramNames) > 0 {
-			params := make(map[string]string, len(paramNames))
+			params := paramsPool.Get().(map[string]string)
+			clear(params)
 			for _, name := range paramNames {
 				params[name] = req.PathValue(name)
 			}
@@ -95,6 +97,16 @@ func (r *Router) Handle(pattern string, h HandlerFunc) {
 			ctx.Params = nil
 		}
 		chain(ctx)
+		if ctx.data != nil {
+			clear(ctx.data)
+			dataPool.Put(ctx.data)
+			ctx.data = nil
+		}
+		if ctx.Params != nil {
+			clear(ctx.Params)
+			paramsPool.Put(ctx.Params)
+			ctx.Params = nil
+		}
 		ctxPool.Put(ctx)
 	}
 
