@@ -11,7 +11,8 @@ type Settings struct {
 	InstalledApps []string
 	App           AppSettings
 	Server        ServerSettings
-	Database      DatabaseSettings
+	Database      DatabaseSettings   // primeiro banco (atalho para Databases[0])
+	Databases     []DatabaseSettings // todos os bancos configurados
 	Cache         CacheSettings
 	Security      SecuritySettings
 }
@@ -30,6 +31,7 @@ type ServerSettings struct {
 }
 
 type DatabaseSettings struct {
+	Name    string
 	Enabled bool
 	Driver  string
 	DSN     string
@@ -73,10 +75,35 @@ func parseHosts(s string) []string {
 	return hosts
 }
 
+func loadDatabases() []DatabaseSettings {
+	blocks := environment.GetBlocks("DB_NAME")
+	if len(blocks) == 0 {
+		return nil
+	}
+	dbs := make([]DatabaseSettings, 0, len(blocks))
+	for _, b := range blocks {
+		dbs = append(dbs, DatabaseSettings{
+			Name:    b["DB_NAME"],
+			Enabled: strings.EqualFold(b["DB_ENABLED"], "true"),
+			Driver:  orDefault(b["DB_DRIVER"], "postgres"),
+			DSN:     b["DB_DSN"],
+		})
+	}
+	return dbs
+}
+
+func orDefault(s, fallback string) string {
+	if s != "" {
+		return s
+	}
+	return fallback
+}
+
 func Load() *Settings {
 	env := environment.GetOr("APP_ENV", "production")
+	databases := loadDatabases()
 
-	return &Settings{
+	s := &Settings{
 		InstalledApps: InstalledApps,
 		App: AppSettings{
 			Name:    "kyrux",
@@ -89,11 +116,7 @@ func Load() *Settings {
 			Port:    environment.GetOr("SERVER_PORT", "8000"),
 			Workers: intOr(environment.Get("SERVER_WORKERS"), runtime.NumCPU()),
 		},
-		Database: DatabaseSettings{
-			Enabled: environment.GetOr("DB_ENABLED", "false") == "true",
-			Driver:  environment.GetOr("DB_DRIVER", "postgres"),
-			DSN:     environment.Get("DB_DSN"),
-		},
+		Databases: databases,
 		Cache: CacheSettings{
 			Enabled: environment.GetOr("CACHE_ENABLED", "false") == "true",
 			Driver:  environment.Get("CACHE_DRIVER"),
@@ -107,4 +130,10 @@ func Load() *Settings {
 			EncryptionKey: environment.Get("FIELD_ENCRYPTION_KEY"),
 		},
 	}
+
+	if len(databases) > 0 {
+		s.Database = databases[0]
+	}
+
+	return s
 }

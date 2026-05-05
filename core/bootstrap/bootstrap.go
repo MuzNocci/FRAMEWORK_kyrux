@@ -52,7 +52,8 @@ func Init(envPath string) (*Framework, error) {
 
 	crypton.SetPepper(cfg.Security.Pepper)
 	crypton.SetEncryptionKey(cfg.Security.EncryptionKey)
-	auth.SetDBEnabled(cfg.Database.Enabled)
+	anyDBEnabled := len(cfg.Databases) > 0 && cfg.Databases[0].Enabled
+	auth.SetDBEnabled(anyDBEnabled)
 	render.SetDebug(cfg.App.Debug)
 	kyerrors.SetDebug(cfg.App.Debug)
 	csrf.SetSecure(!cfg.App.Debug)
@@ -67,8 +68,10 @@ func Init(envPath string) (*Framework, error) {
 		if cfg.Security.Pepper == "" || cfg.Security.Pepper == "your-strong-random-pepper-here" {
 			log.Fatal("bootstrap: PASSWORD_PEPPER não definida — defina um pepper forte no .env antes de rodar em produção")
 		}
-		if cfg.Database.Enabled && strings.Contains(cfg.Database.DSN, "sslmode=disable") {
-			log.Println("bootstrap: AVISO — DB_DSN contém sslmode=disable; use TLS em produção")
+		for _, db := range cfg.Databases {
+			if db.Enabled && strings.Contains(db.DSN, "sslmode=disable") {
+				log.Printf("bootstrap: AVISO — banco '%s' com sslmode=disable; use TLS em produção\n", db.Name)
+			}
 		}
 	}
 
@@ -90,13 +93,22 @@ func Init(envPath string) (*Framework, error) {
 	store := session.NewStore(time.Duration(cfg.Security.SessionTTL) * time.Second)
 
 	dbm := database.NewManager()
-	if cfg.Database.Enabled {
-		if err := dbm.Add("default", cfg.Database.Driver, cfg.Database.DSN); err != nil {
-			return nil, fmt.Errorf("bootstrap: db: %w", err)
+	for i, db := range cfg.Databases {
+		if !db.Enabled {
+			log.Printf("bootstrap: database '%s' disabled\n", db.Name)
+			continue
 		}
-		log.Println("bootstrap: database connected")
-	} else {
-		log.Println("bootstrap: database disabled (DB_ENABLED=false)")
+		if i == 0 {
+			if err := dbm.Add("default", db.Driver, db.DSN); err != nil {
+				return nil, fmt.Errorf("bootstrap: db [%s]: %w", db.Name, err)
+			}
+		}
+		if db.Name != "default" {
+			if err := dbm.Add(db.Name, db.Driver, db.DSN); err != nil {
+				return nil, fmt.Errorf("bootstrap: db [%s]: %w", db.Name, err)
+			}
+		}
+		log.Printf("bootstrap: database '%s' connected\n", db.Name)
 	}
 
 	f := &Framework{
@@ -132,7 +144,7 @@ func Init(envPath string) (*Framework, error) {
 	})
 
 	static := render.MultiStaticHandler("apps")
-	r.HandlePrefix("GET /static/", http.StripPrefix("/static/", static))
+	r.HandlePrefix("GET /statics/", http.StripPrefix("/statics/", static))
 
 	if cfg.App.Debug {
 		lr := hotreload.NewHub()

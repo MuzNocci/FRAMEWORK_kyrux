@@ -126,8 +126,7 @@ func startApp(name string) error {
 	}
 
 	dirs := []string{
-		filepath.Join(base, "statics", "css"),
-		filepath.Join(base, "statics", "js"),
+		filepath.Join(base, "statics", "styles"),
 		filepath.Join(base, "templates"),
 		filepath.Join(base, "views"),
 		filepath.Join(base, "models"),
@@ -147,6 +146,7 @@ func startApp(name string) error {
 		{filepath.Join(base, "views", "views.go"), viewsTpl},
 		{filepath.Join(base, "models", "models.go"), modelsTpl},
 		{filepath.Join(base, "templates", "exemplo.html"), templateTpl},
+		{filepath.Join(base, "statics", "styles", "exemplo.css"), cssTpl},
 	}
 
 	data := struct{ Name string }{Name: name}
@@ -314,6 +314,10 @@ import (
 )
 
 func ExemploView(ctx *router.Context) {
+	// Lógica de negócios aqui (exemplo)
+
+	// Renderiza o template com o contexto
+	// O renderizador irá procurar o template "exemplo.html" dentro da pasta "{{.Name}}/templates/"
 	context := map[string]any{
 		"example": "example",
 	}
@@ -324,13 +328,46 @@ func ExemploView(ctx *router.Context) {
 var modelsTpl = `package models
 `
 
+var cssTpl = `*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--go-blue:#00ACD7;--go-blue-light:#5DC9E2;--go-blue-dark:#00758D;--bg:#0D1117;--surface:#161B22;--border:#1E2A38;--text:#E6EDF3;--muted:#8B949E}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;overflow:auto}
+header{border-bottom:1px solid var(--border);padding:.9rem 2.5rem;display:flex;align-items:center;gap:.75rem;flex-shrink:0}
+.logo-mark{width:28px;height:28px;background:var(--go-blue);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.9rem;color:#fff;letter-spacing:-.5px}
+header span{font-size:1rem;font-weight:600;color:var(--text)}
+header .version{margin-left:auto;font-size:.7rem;color:var(--muted);background:var(--border);padding:.2rem .55rem;border-radius:999px}
+main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2.5rem 2rem;text-align:center;gap:1.1rem}
+.badge{display:inline-flex;align-items:center;gap:.4rem;font-size:.75rem;color:var(--go-blue-light);background:rgba(0,172,215,.1);border:1px solid rgba(0,172,215,.2);padding:.3rem .8rem;border-radius:999px;margin-bottom:.25rem}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--go-blue-light);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+h1{font-size:clamp(1.4rem,3.5vw,2.2rem);font-weight:800;letter-spacing:-.03em;color:var(--text)}
+.subtitle{font-size:clamp(.82rem,1.4vw,.95rem);color:var(--muted);max-width:420px;line-height:1.7}
+.cards{display:flex;gap:1rem;margin-top:.5rem;flex-wrap:wrap;justify-content:center}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem 1.4rem;text-align:left;width:180px;transition:border-color .2s}
+.card:hover{border-color:var(--go-blue-dark)}
+.card-icon{font-size:1.3rem;margin-bottom:.5rem}
+.card-title{font-size:.82rem;font-weight:700;color:var(--text);margin-bottom:.2rem}
+.card-desc{font-size:.75rem;color:var(--muted);line-height:1.5}
+.actions{display:flex;gap:.75rem;margin-top:.5rem;flex-wrap:wrap;justify-content:center}
+.btn{display:inline-flex;align-items:center;gap:.35rem;padding:.5rem 1.2rem;border-radius:8px;font-size:.82rem;text-decoration:none;font-weight:600;transition:border-color .2s,color .2s,background .2s}
+.btn-primary{background:var(--go-blue);color:#fff;border:1px solid var(--go-blue)}
+.btn-primary:hover{background:var(--go-blue-dark);border-color:var(--go-blue-dark)}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--muted)}
+.btn-ghost:hover{border-color:var(--go-blue-dark);color:var(--text)}
+footer{border-top:1px solid var(--border);padding:.75rem 2rem;text-align:center;font-size:.82rem;color:var(--muted);flex-shrink:0}
+footer a{color:var(--go-blue);text-decoration:none}
+footer a:hover{text-decoration:underline}
+@media(max-width:640px){main{padding:2rem 1.25rem;gap:1rem}.cards{flex-direction:column;align-items:center}.card{width:100%;max-width:280px}}
+@media(max-width:380px){.actions{flex-direction:column;align-items:center}}
+`
+
 var templateTpl = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{{"{{"}} AppName {{"}}"}}</title>
-<style>*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}:root{--go-blue:#00ACD7;--go-blue-light:#5DC9E2;--go-blue-dark:#00758D;--bg:#0D1117;--surface:#161B22;--border:#1E2A38;--text:#E6EDF3;--muted:#8B949E}html,body{height:100%}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;overflow:auto}header{border-bottom:1px solid var(--border);padding:.9rem 2.5rem;display:flex;align-items:center;gap:.75rem;flex-shrink:0}.logo-mark{width:28px;height:28px;background:var(--go-blue);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.9rem;color:#fff;letter-spacing:-.5px}header span{font-size:1rem;font-weight:600;color:var(--text)}header .version{margin-left:auto;font-size:.7rem;color:var(--muted);background:var(--border);padding:.2rem .55rem;border-radius:999px}main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2.5rem 2rem;text-align:center;gap:1.1rem}.badge{display:inline-flex;align-items:center;gap:.4rem;font-size:.75rem;color:var(--go-blue-light);background:rgba(0,172,215,.1);border:1px solid rgba(0,172,215,.2);padding:.3rem .8rem;border-radius:999px;margin-bottom:.25rem}.dot{width:6px;height:6px;border-radius:50%;background:var(--go-blue-light);animation:pulse 2s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}h1{font-size:clamp(1.4rem,3.5vw,2.2rem);font-weight:800;letter-spacing:-.03em;color:var(--text)}.subtitle{font-size:clamp(.82rem,1.4vw,.95rem);color:var(--muted);max-width:420px;line-height:1.7}.cards{display:flex;gap:1rem;margin-top:.5rem;flex-wrap:wrap;justify-content:center}.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem 1.4rem;text-align:left;width:180px;transition:border-color .2s}.card:hover{border-color:var(--go-blue-dark)}.card-icon{font-size:1.3rem;margin-bottom:.5rem}.card-title{font-size:.82rem;font-weight:700;color:var(--text);margin-bottom:.2rem}.card-desc{font-size:.75rem;color:var(--muted);line-height:1.5}.actions{display:flex;gap:.75rem;margin-top:.5rem;flex-wrap:wrap;justify-content:center}.btn{display:inline-flex;align-items:center;gap:.35rem;padding:.5rem 1.2rem;border-radius:8px;font-size:.82rem;text-decoration:none;font-weight:600;transition:border-color .2s,color .2s,background .2s}.btn-primary{background:var(--go-blue);color:#fff;border:1px solid var(--go-blue)}.btn-primary:hover{background:var(--go-blue-dark);border-color:var(--go-blue-dark)}.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--muted)}.btn-ghost:hover{border-color:var(--go-blue-dark);color:var(--text)}footer{border-top:1px solid var(--border);padding:.75rem 2rem;text-align:center;font-size:.82rem;color:var(--muted);flex-shrink:0}footer a{color:var(--go-blue);text-decoration:none}footer a:hover{text-decoration:underline}@media(max-width:640px){main{padding:2rem 1.25rem;gap:1rem}.cards{flex-direction:column;align-items:center}.card{width:100%;max-width:280px}}@media(max-width:380px){.actions{flex-direction:column;align-items:center}}</style>
+<title>{{"{{"}} AppName {{"}}"}} | Página de exemplo — substitua este template para começar.</title>
+<link rel="stylesheet" href="{{"{{"}} statics "{{.Name}}" "styles/exemplo.css" {{"}}"}}">
 </head>
 <body>
 <header>

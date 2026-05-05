@@ -16,6 +16,9 @@ import (
 //go:embed welcome.html
 var welcomeHTML string
 
+//go:embed welcome.css
+var welcomeCSS []byte
+
 type pageData struct {
 	AppName   string
 	Version   string
@@ -27,6 +30,20 @@ type pageData struct {
 var welcomeTpl = template.Must(template.New("welcome").Parse(welcomeHTML))
 
 func RegisterIfNeeded(r *router.Router) {
+	cssEtag := fmt.Sprintf(`"%x"`, sha256.Sum256(welcomeCSS))
+	r.Internal("GET /kyrux/statics/welcome.css", func(ctx *router.Context) {
+		if ctx.Request.Header.Get("If-None-Match") == cssEtag {
+			ctx.Writer.WriteHeader(http.StatusNotModified)
+			return
+		}
+		h := ctx.Writer.Header()
+		h.Set("Content-Type", "text/css; charset=utf-8")
+		h.Set("Content-Length", strconv.Itoa(len(welcomeCSS)))
+		h.Set("ETag", cssEtag)
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+		ctx.Writer.Write(welcomeCSS)
+	})
+
 	if r.HasRoute("GET /") {
 		return
 	}

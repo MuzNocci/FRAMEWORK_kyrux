@@ -19,7 +19,14 @@ import (
 )
 
 var templateFuncs = template.FuncMap{
-	"url": router.Resolve,
+	"url":     router.Resolve,
+	"statics": func(_ string, parts ...string) string {
+		path := strings.Join(parts, "")
+		if path != "" {
+			return "/statics/" + path
+		}
+		return "/statics"
+	},
 }
 
 const liveScript = `<script>

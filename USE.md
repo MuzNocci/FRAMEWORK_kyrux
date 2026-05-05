@@ -112,9 +112,16 @@ SERVER_WORKERS=4        # omitir para usar todos os CPUs disponíveis
 ALLOWED_HOSTS=meusite.com.br,www.meusite.com.br
 
 # ── Banco de dados ────────────────────────────────────────────────
+# Cada bloco DB_NAME inicia um novo banco. O primeiro é o padrão.
+DB_NAME=principal
 DB_ENABLED=true
 DB_DRIVER=postgres
 DB_DSN=postgres://user:password@localhost:5432/meudb?sslmode=disable
+
+# DB_NAME=analytics
+# DB_ENABLED=true
+# DB_DRIVER=postgres
+# DB_DSN=postgres://user:password@localhost:5432/analytics?sslmode=disable
 
 # ── Cache ─────────────────────────────────────────────────────────
 CACHE_ENABLED=false
@@ -155,7 +162,8 @@ Gera automaticamente:
 - `apps/<nome>/views/views.go` — com `func ExemploView`
 - `apps/<nome>/models/models.go`
 - `apps/<nome>/templates/exemplo.html` — página de boas-vindas estilizada
-- Pastas `statics/css/` e `statics/js/`
+- `apps/<nome>/statics/styles/exemplo.css` — estilos da página de exemplo
+- Pasta `statics/styles/`
 - Registra em `InstalledApps` e adiciona o import automaticamente
 
 ### Remover um app
@@ -388,6 +396,7 @@ O Kyrux usa herança de templates no estilo Django. Os templates ficam em `apps/
 | `{{ Addr }}`     | Framework       | `0.0.0.0:8000`             |
 | `{{ GoVersion }}`| Framework       | `go1.22.3`                 |
 | `{{ url "nome" }}`| Framework      | Resolve a URL pelo nome    |
+| `{{ statics "app" "path/arquivo.css" }}`| Framework | Resolve URL de arquivo estático |
 | `{{ csrf_token }}`| Framework      | Input hidden de segurança  |
 
 ### Herança de templates
@@ -399,7 +408,7 @@ O Kyrux usa herança de templates no estilo Django. Os templates ficam em `apps/
 <head>
   <meta charset="UTF-8">
   <title>{% block "title" %}{{ AppName }}{% endblock "title" %}</title>
-  <link rel="stylesheet" href="/static/blog/css/style.css">
+  <link rel="stylesheet" href="{{ statics "blog" "styles/style.css" }}">
 </head>
 <body>
   {% include "partials/navbar.html" %}
@@ -427,7 +436,7 @@ O Kyrux usa herança de templates no estilo Django. Os templates ficam em `apps/
 {% endblock "content" %}
 
 {% block "scripts" %}
-  <script src="/static/blog/js/post.js"></script>
+  <script src="{{ statics "blog" "scripts/post.js" }}"></script>
 {% endblock "scripts" %}
 ```
 
@@ -493,13 +502,56 @@ Uso no template:
 
 ### Arquivos estáticos
 
+Os arquivos ficam em `apps/<nome>/statics/` e são servidos automaticamente em `/statics/`. Use a função `statics` no template para referenciar arquivos sem expor o nome do app na URL final.
+
+**Sintaxe:**
 ```html
-<link rel="stylesheet" href="/static/blog/css/style.css">
-<script src="/static/blog/js/app.js"></script>
-<img src="/static/blog/img/logo.png">
+{{ statics "nome-do-app" "caminho/arquivo.ext" }}
 ```
 
-Os arquivos ficam em `apps/blog/statics/` e são servidos automaticamente em `/static/blog/`.
+O primeiro argumento é o nome do app (apenas para clareza do desenvolvedor — não aparece na URL gerada). Os argumentos seguintes são concatenados para formar o caminho do arquivo.
+
+**Exemplos:**
+```html
+<!-- CSS e JS -->
+<link rel="stylesheet" href="{{ statics "blog" "styles/base.css" }}">
+<script src="{{ statics "blog" "scripts/app.js" }}"></script>
+
+<!-- Imagem fixa -->
+<img src="{{ statics "blog" "images/logo.png" }}" alt="Logo">
+
+<!-- Imagem com nome vindo do banco de dados -->
+<img src="{{ statics "blog" "uploads/" .UserPhoto }}" alt="Foto">
+
+<!-- Caminho completamente dinâmico -->
+<img src="{{ statics "blog" .ImagePath }}" alt="Imagem">
+
+<!-- Combinando prefixo, subpasta e variável -->
+<img src="{{ statics "blog" "uploads/" .Category "/" .FileName }}" alt="Arquivo">
+```
+
+**URL gerada** (o nome do app nunca aparece):
+```
+/statics/styles/base.css
+/statics/uploads/avatar.jpg
+```
+
+**Estrutura de pastas por app:**
+```
+apps/
+└── blog/
+    └── statics/
+        ├── styles/       ← CSS
+        ├── scripts/      ← JavaScript
+        └── images/       ← Imagens e outros assets
+```
+
+**Estáticos globais** (compartilhados entre todos os apps):
+```
+statics/           ← raiz do projeto
+└── styles/
+└── scripts/
+```
 
 ---
 
@@ -643,37 +695,40 @@ import _ "github.com/lib/pq"
 
 ### 3. Configurar o `.env`
 
+Cada bloco iniciado por `DB_NAME` define um banco. O primeiro é o padrão (`Use()`). Adicione quantos blocos precisar — sem numeração, sem chaves extras.
+
 ```env
+DB_NAME=principal
 DB_ENABLED=true
 DB_DRIVER=postgres
 DB_DSN=postgres://user:password@localhost:5432/meudb?sslmode=disable
+
+DB_NAME=analytics
+DB_ENABLED=true
+DB_DRIVER=postgres
+DB_DSN=postgres://user:password@localhost:5432/analytics?sslmode=disable
+
+DB_NAME=legado
+DB_ENABLED=true
+DB_DRIVER=mysql
+DB_DSN=user:password@tcp(localhost:3306)/legado
 ```
 
 ### Conexão padrão
 
 ```go
-db := fw.DB.Use()          // conexão "default" (configurada no .env)
-
-rows, err := db.Query("SELECT id, titulo FROM posts WHERE publicado = $1", true)
-defer rows.Close()
-
-for rows.Next() {
-    var id int
-    var titulo string
-    rows.Scan(&id, &titulo)
-}
+db := fw.DB.Use()              // banco "principal" (primeiro do .env)
+db := fw.DB.Use("analytics")  // banco "analytics"
+db := fw.DB.Use("legado")      // banco "legado"
 ```
 
-### Múltiplas conexões
+### Múltiplas conexões em runtime
+
+Para adicionar conexões fora do `.env` (ex: multi-tenant dinâmico):
 
 ```go
-// Adicionar conexão secundária (em qualquer lugar após o bootstrap)
-fw.DB.Add("analytics", "postgres", os.Getenv("ANALYTICS_DSN"))
-fw.DB.Add("legado",    "mysql",    os.Getenv("LEGADO_DSN"))
-
-// Usar
-db := fw.DB.Use("analytics")
-db := fw.DB.Use("legado")
+fw.DB.Add("tenant_xyz", "postgres", dsn)
+db := fw.DB.Use("tenant_xyz")
 ```
 
 ### Transações
