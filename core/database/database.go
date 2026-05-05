@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"kyrux/core/environment"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -124,10 +126,35 @@ func open(driver, dsn string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("database: open [%s]: %w", driver, err)
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(30 * time.Minute)
-	db.SetConnMaxIdleTime(5 * time.Minute)
+	// Configuráveis via env vars (se presentes) — fallback para valores sensatos.
+	maxOpen := 25
+	if v := environment.Get("DB_MAX_OPEN_CONNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxOpen = n
+		}
+	}
+	maxIdle := 5
+	if v := environment.Get("DB_MAX_IDLE_CONNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxIdle = n
+		}
+	}
+	maxLifetime := 30 * time.Minute
+	if v := environment.Get("DB_CONN_MAX_LIFETIME_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxLifetime = time.Duration(n) * time.Second
+		}
+	}
+	maxIdleTime := 5 * time.Minute
+	if v := environment.Get("DB_CONN_MAX_IDLE_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxIdleTime = time.Duration(n) * time.Second
+		}
+	}
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	db.SetConnMaxLifetime(maxLifetime)
+	db.SetConnMaxIdleTime(maxIdleTime)
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("database: ping [%s]: %w", driver, err)
 	}

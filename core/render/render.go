@@ -20,7 +20,7 @@ import (
 )
 
 var templateFuncs = template.FuncMap{
-	"url":     router.Resolve,
+	"url": router.Resolve,
 	"statics": func(_ string, parts ...string) string {
 		path := strings.Join(parts, "")
 		if path != "" {
@@ -131,8 +131,8 @@ func buildSnippet(src string, errorLine, context int) []kyerrors.SnippetLine {
 	return out
 }
 
-func SetDebug(v bool)  { debugMode.Store(v) }
-func isDebug() bool    { return debugMode.Load() }
+func SetDebug(v bool) { debugMode.Store(v) }
+func isDebug() bool   { return debugMode.Load() }
 
 func AddDefaultProcessor(p ContextProcessor) {
 	defaultProcessors = append(defaultProcessors, p)
