@@ -38,7 +38,7 @@ ContextProcessors e injeção automática de WebSocket.
 
 ### Templates
 Herança via `{% extends %}`, blocos com `{% block %}`, inclusão com `{% include %}`.
-Funções globais: `{{ AppName }}`, `{{ Version }}`, `{{ Env }}`, `{{ Addr }}`, `{{ url "nome" }}`, `{{ csrf_token }}`.
+Funções globais: `{{ AppName }}`, `{{ Version }}`, `{{ Env }}`, `{{ Addr }}`, `{{ url "nome" }}`, `{{ csrf_token }}`, `{{ statics "app" "path/arquivo.css" }}`.
 
 ### Middleware
 Recovery (panic), AllowedHosts, CORS, SecureHeaders, RequireLogin (SSR), RequireAuth (JWT), compressão gzip.
@@ -64,7 +64,8 @@ Query builder fluente com generics, hash/encrypt automático, paginação, multi
 Wrapper de `database/sql` com pool configurado, multi-conexão nomeada, transações e schema por conexão.
 
 ### Migrations
-Arquivos `.sql` numerados em `database/migrations/`. Rastreamento via tabela `kyrux_migrations`.
+Arquivos `.sql` numerados em `database/migrations/` com seções `up` e `-- down`.
+Rastreamento via tabela `kyrux_migrations`. `removemigration all` executa o down antes de remover o registro.
 
 ### Cache
 Cache em memória com TTL e GC automático.
@@ -92,7 +93,7 @@ go run main.go migrate              # aplica migrations pendentes em database/mi
 go run main.go createsuperuser      # cria usuário is_admin + is_staff interativamente
 go run main.go createuser           # cria usuário comum interativamente
 go run main.go removemigration 0003        # remove migration do disco
-go run main.go removemigration 0003 all    # remove do disco + da tabela kyrux_migrations
+go run main.go removemigration 0003 all    # executa down, remove do banco e do disco
 ```
 
 
@@ -111,9 +112,16 @@ SERVER_WORKERS=4             # omitir → runtime.NumCPU()
 ALLOWED_HOSTS=meusite.com.br,www.meusite.com.br
 
 # ── Banco de dados ────────────────────────────────────────────────
+# Cada bloco DB_NAME define um banco. O primeiro é o padrão (Use()).
+DB_NAME=principal
 DB_ENABLED=true
 DB_DRIVER=postgres           # postgres | pgx | mysql | sqlite | sqlserver | oracle
 DB_DSN=postgres://user:pass@localhost:5432/db?sslmode=disable
+
+# DB_NAME=secundario         # adicione quantos blocos precisar
+# DB_ENABLED=true
+# DB_DRIVER=postgres
+# DB_DSN=postgres://user:pass@localhost:5432/outro?sslmode=disable
 
 # ── Cache ─────────────────────────────────────────────────────────
 CACHE_ENABLED=false

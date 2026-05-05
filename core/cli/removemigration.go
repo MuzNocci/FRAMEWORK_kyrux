@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"kyrux/core/database"
+	dbmigrate "kyrux/core/database/migrate"
 	"kyrux/core/environment"
 	"os"
 	"path/filepath"
@@ -12,23 +13,19 @@ import (
 // ── removemigration ───────────────────────────────────────────────────────────
 
 func runRemoveMigration(migNum string, removeAll bool) error {
-	// Validar número
 	migNum = strings.TrimSpace(migNum)
 	if migNum == "" {
 		return fmt.Errorf("número da migration não pode estar vazio")
 	}
 
-	// Encontrar arquivo da migration
 	migDir := "database/migrations"
 	files, err := filepath.Glob(filepath.Join(migDir, migNum+"_*.sql"))
 	if err != nil {
 		return fmt.Errorf("listar migrations: %w", err)
 	}
-
 	if len(files) == 0 {
 		return fmt.Errorf("nenhuma migration encontrada com número %s", migNum)
 	}
-
 	if len(files) > 1 {
 		return fmt.Errorf("múltiplas migrations encontradas com número %s: %v", migNum, files)
 	}
@@ -36,22 +33,34 @@ func runRemoveMigration(migNum string, removeAll bool) error {
 	migPath := files[0]
 	migName := filepath.Base(migPath)
 
-	// Se for apenas remover do disco
+	// Apenas remove do disco — sem tocar no banco
 	if !removeAll {
 		if err := os.Remove(migPath); err != nil {
 			return fmt.Errorf("remover arquivo %s: %w", migName, err)
 		}
 		fmt.Printf("✓ Migration '%s' removida do disco\n", migName)
-		fmt.Println("  (para remover do banco, use: removemigration <num> all)")
+		fmt.Println("  (para desfazer o schema e remover do banco, use: removemigration <num> all)")
 		return nil
 	}
 
-	// Remover do disco e do banco de dados
-	_ = environment.Load(".env")
-
-	if environment.GetOr("DB_ENABLED", "false") != "true" {
-		return fmt.Errorf("DB_ENABLED=false — banco de dados não configurado, não é possível remover do banco")
+	// Remove do banco: executa o down, limpa o registro e apaga o arquivo
+	content, err := os.ReadFile(migPath)
+	if err != nil {
+		return fmt.Errorf("ler arquivo %s: %w", migName, err)
 	}
+
+	_, down := dbmigrate.SplitMigration(string(content))
+	if strings.TrimSpace(down) == "" {
+		return fmt.Errorf(
+			"migration '%s' não possui seção '-- down'\n"+
+				"  Adicione ao final do arquivo:\n\n"+
+				"  -- down\n"+
+				"  DROP TABLE IF EXISTS <tabela>;\n",
+			migName,
+		)
+	}
+
+	_ = environment.Load(".env")
 
 	driver := environment.GetOr("DB_DRIVER", "postgres")
 	dsn := environment.Get("DB_DSN")
@@ -65,35 +74,20 @@ func runRemoveMigration(migNum string, removeAll bool) error {
 	}
 	defer db.Close()
 
-	// Remover do banco de dados
-	sqlQuery := "DELETE FROM kyrux_migrations WHERE name = ?"
-
-	// Converter ? para $1 se for PostgreSQL
-	if driver == "postgres" || driver == "pgx" {
-		sqlQuery = "DELETE FROM kyrux_migrations WHERE name = $1"
+	if err := dbmigrate.ExecDown(db, string(content)); err != nil {
+		return fmt.Errorf("executar down da migration '%s': %w", migName, err)
 	}
+	fmt.Printf("✓ Schema revertido pela seção down de '%s'\n", migName)
 
-	result, err := db.Exec(sqlQuery, migName)
-	if err != nil {
-		return fmt.Errorf("remover do banco: %w", err)
+	if err := dbmigrate.Unrecord(db, migName); err != nil {
+		return fmt.Errorf("remover registro de '%s' do banco: %w", migName, err)
 	}
+	fmt.Printf("✓ Migration '%s' removida de kyrux_migrations\n", migName)
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("ler rows afetadas: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		fmt.Printf("⚠ Migration '%s' não encontrada na tabela kyrux_migrations (já removida?)\n", migName)
-	} else {
-		fmt.Printf("✓ Migration '%s' removida do banco de dados\n", migName)
-	}
-
-	// Remover do disco
 	if err := os.Remove(migPath); err != nil {
 		return fmt.Errorf("remover arquivo %s: %w", migName, err)
 	}
+	fmt.Printf("✓ Arquivo '%s' removido do disco\n", migName)
 
-	fmt.Printf("✓ Migration '%s' removida do disco\n", migName)
 	return nil
 }

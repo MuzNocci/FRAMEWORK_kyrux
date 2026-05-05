@@ -782,15 +782,34 @@ O Kyrux inclui um sistema de migrations baseado em arquivos `.sql` numerados, co
 - Cada migration é aplicada **uma única vez** (idempotente)
 - Se a tabela já existe no banco mesmo que o arquivo tenha sido removido, apenas registra a migration sem reexecutar o SQL
 
+### Formato do arquivo de migration
+
+Cada arquivo `.sql` pode conter duas seções separadas pelo marcador `-- down`:
+
+```sql
+-- up (implícito — tudo antes de "-- down")
+CREATE TABLE IF NOT EXISTS posts (
+    id         BIGSERIAL    PRIMARY KEY,
+    titulo     VARCHAR(200) NOT NULL DEFAULT '',
+    publicado  BOOLEAN      NOT NULL DEFAULT FALSE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS posts_titulo_idx ON posts (titulo);
+
+-- down
+DROP INDEX IF EXISTS posts_titulo_idx;
+DROP TABLE IF EXISTS posts;
+```
+
+A seção **up** é aplicada pelo `migrate`. A seção **down** é executada pelo `removemigration all` para desfazer o schema com segurança antes de remover o registro.
+
 ### Gerar migrations automaticamente (`makemigrations`)
 
-O comando lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go` e `core/security/auth/*.go`, compara com as tabelas já migradas e gera o SQL:
+O comando lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go` e `core/security/auth/*.go`, compara com as tabelas já migradas e gera o SQL com as seções up e down automaticamente:
 
 ```bash
 go run main.go makemigrations
 ```
-
-O arquivo `NNNN_auto.sql` gerado usa `CREATE TABLE IF NOT EXISTS` com tipos adequados ao `DB_DRIVER` configurado.
 
 > Revise o arquivo gerado antes de aplicar — índices compostos, constraints e defaults personalizados devem ser ajustados manualmente.
 
@@ -800,7 +819,7 @@ O arquivo `NNNN_auto.sql` gerado usa `CREATE TABLE IF NOT EXISTS` com tipos adeq
 go run main.go migrate
 ```
 
-Aplica todos os arquivos `.sql` ainda não registrados em `kyrux_migrations`. Múltiplas instruções SQL por arquivo são suportadas (separadas por `;`).
+Aplica a seção **up** de todos os arquivos `.sql` ainda não registrados em `kyrux_migrations`. Múltiplas instruções SQL por arquivo são suportadas (separadas por `;`).
 
 **Comportamento inteligente:**
 - Se o arquivo SQL ainda existe: executa normalmente e registra
@@ -813,11 +832,17 @@ Aplica todos os arquivos `.sql` ainda não registrados em `kyrux_migrations`. M�
 # Remove apenas do disco (permite regenerar a migration)
 go run main.go removemigration 0001
 
-# Remove do disco E do banco de dados
+# Executa a seção down, remove o registro do banco e apaga o arquivo
 go run main.go removemigration 0001 all
 ```
 
-Uso comum: após `removemigration 0001 all`, você pode rodar `makemigrations` novamente para regenerar a migration com correções.
+O `removemigration all` executa as seguintes etapas em ordem:
+1. Lê o arquivo e extrai a seção `-- down`
+2. Executa o SQL de reversão no banco (ex: `DROP TABLE IF EXISTS ...`)
+3. Remove o registro de `kyrux_migrations`
+4. Apaga o arquivo do disco
+
+> Se o arquivo não tiver seção `-- down`, o comando aborta com uma mensagem indicando o que adicionar — nunca remove silenciosamente sem desfazer o schema.
 
 ### Tipos SQL gerados
 
@@ -837,13 +862,17 @@ Campos com ponteiro (`*string`, `*int`) são gerados sem `NOT NULL`. Campos não
 
 ### Migrations manuais
 
-Para alterações que o `makemigrations` não cobre (ALTER TABLE, índices compostos, dados iniciais):
+Para alterações que o `makemigrations` não cobre (ALTER TABLE, índices compostos, dados iniciais), inclua sempre a seção down:
 
 ```sql
--- database/migrations/0002_add_slug_to_posts.sql
+-- database/migrations/0003_add_slug_to_posts.sql
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS slug VARCHAR(200) NOT NULL DEFAULT '';
 
 CREATE UNIQUE INDEX IF NOT EXISTS posts_slug_idx ON posts (slug);
+
+-- down
+DROP INDEX IF EXISTS posts_slug_idx;
+ALTER TABLE posts DROP COLUMN IF EXISTS slug;
 ```
 
 Execute com `go run main.go migrate`.

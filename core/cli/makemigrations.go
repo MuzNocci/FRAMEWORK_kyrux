@@ -197,7 +197,6 @@ func migGenerateSQL(models []migModel, driver string) string {
 		}
 		sb.WriteString(");\n")
 
-		// índices únicos (exceto PK)
 		for _, f := range m.Fields {
 			if f.Unique && !f.IsPK {
 				fmt.Fprintf(&sb, "\nCREATE UNIQUE INDEX IF NOT EXISTS %s_%s_idx ON %s (%s);\n",
@@ -205,6 +204,19 @@ func migGenerateSQL(models []migModel, driver string) string {
 			}
 		}
 	}
+
+	// Seção down: desfaz tudo na ordem inversa
+	sb.WriteString("\n-- down\n")
+	for i := len(models) - 1; i >= 0; i-- {
+		m := models[i]
+		for _, f := range m.Fields {
+			if f.Unique && !f.IsPK {
+				fmt.Fprintf(&sb, "DROP INDEX IF EXISTS %s_%s_idx;\n", m.Table, f.Column)
+			}
+		}
+		fmt.Fprintf(&sb, "DROP TABLE IF EXISTS %s;\n", m.Table)
+	}
+
 	return sb.String()
 }
 

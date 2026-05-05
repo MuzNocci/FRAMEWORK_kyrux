@@ -33,7 +33,6 @@ func Run(db *database.DB, dir string) error {
 	pending := 0
 	for _, f := range files {
 		name := filepath.Base(f)
-		fmt.Printf("  [DEBUG] Processando: %s\n", name)
 
 		if applied[name] {
 			fmt.Printf("  ~ %s (já aplicada)\n", name)
@@ -45,11 +44,9 @@ func Run(db *database.DB, dir string) error {
 			return fmt.Errorf("migrate: ler %s: %w", name, err)
 		}
 
-		// Extrair nomes de tabelas do SQL
-		tables := extractTableNames(string(content))
-		fmt.Printf("  [DEBUG] Tabelas extraídas: %v\n", tables)
+		up, _ := SplitMigration(string(content))
+		tables := extractTableNames(up)
 
-		// Se todas as tabelas já existem no banco, apenas registrar a migration
 		allTablesExist := len(tables) > 0
 		for _, table := range tables {
 			if !tableExists(db, table) {
@@ -59,19 +56,14 @@ func Run(db *database.DB, dir string) error {
 		}
 
 		if allTablesExist && len(tables) > 0 {
-			// Apenas registrar sem executar SQL
 			fmt.Printf("  ⊙ %s (tabelas já existem, apenas registrando)\n", name)
 		} else {
-			// Executar SQL normalmente
-			fmt.Printf("  [DEBUG] Executando SQL para %s\n", name)
-			if err := execSQL(db, string(content)); err != nil {
+			if err := execSQL(db, up); err != nil {
 				return fmt.Errorf("migrate: executar %s: %w", name, err)
 			}
 			fmt.Printf("  ✓ %s\n", name)
 		}
 
-		// Registrar a migration no banco de dados
-		fmt.Printf("  [DEBUG] Registrando migration %s no banco\n", name)
 		if err := record(db, name); err != nil {
 			return fmt.Errorf("migrate: registrar %s: %w", name, err)
 		}
@@ -84,6 +76,54 @@ func Run(db *database.DB, dir string) error {
 	}
 	if len(files) == 0 {
 		fmt.Println("  Nenhum arquivo .sql encontrado em", dir)
+	}
+	return nil
+}
+
+// SplitMigration divide o conteúdo de um arquivo .sql em seção up e down.
+// A linha "-- down" (case-insensitive) é o separador.
+// Se não houver separador, todo o conteúdo é tratado como up.
+func SplitMigration(content string) (up, down string) {
+	var upLines, downLines []string
+	inDown := false
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(strings.ToLower(line)) == "-- down" {
+			inDown = true
+			continue
+		}
+		if inDown {
+			downLines = append(downLines, line)
+		} else {
+			upLines = append(upLines, line)
+		}
+	}
+	return strings.Join(upLines, "\n"), strings.Join(downLines, "\n")
+}
+
+// ExecDown executa a seção down de um arquivo de migration.
+// Retorna erro se a seção down estiver vazia.
+func ExecDown(db *database.DB, content string) error {
+	_, down := SplitMigration(content)
+	down = strings.TrimSpace(down)
+	if down == "" {
+		return fmt.Errorf("migration não possui seção '-- down'")
+	}
+	return execSQL(db, down)
+}
+
+// Unrecord remove o registro de uma migration da tabela kyrux_migrations.
+func Unrecord(db *database.DB, name string) error {
+	query := "DELETE FROM kyrux_migrations WHERE name = ?"
+	if db.Driver == "postgres" || db.Driver == "pgx" {
+		query = "DELETE FROM kyrux_migrations WHERE name = $1"
+	}
+	result, err := db.Exec(query, name)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		fmt.Printf("⚠ Migration '%s' não encontrada em kyrux_migrations (já removida?)\n", name)
 	}
 	return nil
 }
@@ -117,7 +157,7 @@ func tableExists(db *database.DB, tableName string) bool {
 	switch db.Driver {
 	case "postgres", "pgx":
 		query = `SELECT EXISTS(
-			SELECT 1 FROM information_schema.tables 
+			SELECT 1 FROM information_schema.tables
 			WHERE table_schema = 'public' AND table_name = $1
 		)`
 		err := db.QueryRow(query, tableName).Scan(&exists)
@@ -146,11 +186,6 @@ func appliedMigrations(db *database.DB) (map[string]bool, error) {
 		}
 		applied[name] = true
 	}
-
-	if len(applied) > 0 {
-		fmt.Printf("  [DEBUG] Migrations aplicadas no banco: %v\n", applied)
-	}
-
 	return applied, rows.Err()
 }
 
@@ -160,14 +195,8 @@ func record(db *database.DB, name string) error {
 	if db.Driver == "postgres" || db.Driver == "pgx" {
 		query = "INSERT INTO kyrux_migrations (name) VALUES ($1)"
 	}
-	result, err := db.Exec(query, name)
-	if err != nil {
-		fmt.Printf("  [ERROR] record failed: %v\n", err)
-		return err
-	}
-	rows, _ := result.RowsAffected()
-	fmt.Printf("  [DEBUG] Migration '%s' registrada (rows affected: %d)\n", name, rows)
-	return nil
+	_, err := db.Exec(query, name)
+	return err
 }
 
 // execSQL executa um arquivo SQL que pode conter múltiplos statements separados por ";".
@@ -175,11 +204,7 @@ func record(db *database.DB, name string) error {
 func execSQL(db *database.DB, content string) error {
 	for _, stmt := range strings.Split(content, ";") {
 		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-		// ignora blocos que sejam apenas comentários
-		if isComment(stmt) {
+		if stmt == "" || isComment(stmt) {
 			continue
 		}
 		if _, err := db.Exec(stmt); err != nil {
@@ -201,13 +226,11 @@ func isComment(s string) bool {
 }
 
 // extractTableNames extrai os nomes das tabelas criadas no SQL.
-// Procura por padrões de CREATE TABLE.
 func extractTableNames(sql string) []string {
 	var tables []string
 	upper := strings.ToUpper(sql)
 	lower := sql
 
-	// Procurar por CREATE TABLE
 	pos := 0
 	for {
 		idx := strings.Index(upper[pos:], "CREATE TABLE")
@@ -216,26 +239,21 @@ func extractTableNames(sql string) []string {
 		}
 		pos += idx + len("CREATE TABLE")
 
-		// Pular espaços e IF NOT EXISTS
 		rest := strings.TrimSpace(upper[pos:])
 		restLower := strings.TrimSpace(lower[pos:])
 
-		// Verificar se há IF NOT EXISTS
 		if strings.HasPrefix(rest, "IF NOT EXISTS") {
 			idx := strings.Index(rest, "IF NOT EXISTS") + len("IF NOT EXISTS")
 			rest = strings.TrimSpace(rest[idx:])
 			restLower = strings.TrimSpace(restLower[idx:])
 		}
 
-		// Extrair nome da tabela (até o próximo espaço ou parêntese)
 		endIdx := strings.IndexAny(rest, " (\n")
 		if endIdx > 0 {
 			tableName := restLower[:endIdx]
-			// Remover schema se houver (ex: public.users -> users)
 			if dotIdx := strings.Index(tableName, "."); dotIdx >= 0 {
 				tableName = tableName[dotIdx+1:]
 			}
-			fmt.Printf("    [DEBUG] Tabela extraída: '%s'\n", tableName)
 			tables = append(tables, tableName)
 		}
 		pos++
