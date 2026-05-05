@@ -8,6 +8,7 @@
 /bin/
 /kyrux
 /kyrux_bench
+/benchmark/
 /tmp/
 /core/air/tmp/
 /core/air/apps/*

@@ -71,6 +71,11 @@ func Run(args []string) {
 			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
 			os.Exit(1)
 		}
+	case "benchmark":
+		if err := runBenchmark(); err != nil {
+			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "comando desconhecido: %s\n\n", command)
 		printUsage()
@@ -89,6 +94,7 @@ func printUsage() {
 	fmt.Println("  removemigration <num> [all]   remove migration do disco (ou disco+banco com 'all')")
 	fmt.Println("  createsuperuser               cria um superusuário (is_admin + is_staff)")
 	fmt.Println("  createuser                    cria um usuário comum")
+	fmt.Println("  benchmark                     roda todos os testes de performance e salva o resultado em benchmark/")
 }
 
 // ── migrate ───────────────────────────────────────────────────────────────────
@@ -297,31 +303,32 @@ func init() {
 	bootstrap.RegisterApp("{{.Name}}", Register)
 }
 
-var URLPatterns = []router.URLPattern{
-	router.Path("GET", "/", views.ExemploView, "exemplo_home"),
-}
-
-func Register(r *router.Router) {
-	router.Include(r, URLPatterns)
+func Register(r *router.Router, fw *bootstrap.Framework) {
+	router.Include(r, []router.URLPattern{
+		router.Path("GET", "/{{.Name}}/", views.ExemploView(fw), "exemplo_home"),
+	})
 }
 `
 
 var viewsTpl = `package views
 
 import (
+	"kyrux/core/bootstrap"
 	"kyrux/core/render"
 	"kyrux/core/router"
 )
 
-func ExemploView(ctx *router.Context) {
-	// Lógica de negócios aqui (exemplo)
+func ExemploView(fw *bootstrap.Framework) router.HandlerFunc {
+	return func(ctx *router.Context) {
+		// Lógica de negócios aqui (exemplo)
 
-	// Renderiza o template com o contexto
-	// O renderizador irá procurar o template "exemplo.html" dentro da pasta "{{.Name}}/templates/"
-	context := map[string]any{
-		"example": "example",
+		// Renderiza o template com o contexto
+		// O renderizador irá procurar o template "exemplo.html" dentro da pasta "{{.Name}}/templates/"
+		context := map[string]any{
+			"example": "example",
+		}
+		render.For("{{.Name}}").Render(ctx, "exemplo.html", context)
 	}
-	render.For("{{.Name}}").Render(ctx, "exemplo.html", context)
 }
 `
 

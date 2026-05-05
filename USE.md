@@ -714,13 +714,25 @@ DB_DRIVER=mysql
 DB_DSN=user:password@tcp(localhost:3306)/legado
 ```
 
-### Conexão padrão
+### Usar a conexão nas views
+
+As views recebem `fw` via closure no `routes.go`. Dentro da view, escolha o banco pelo nome definido em `DB_NAME`:
 
 ```go
-db := fw.DB.Use()              // banco "principal" (primeiro do .env)
-db := fw.DB.Use("analytics")  // banco "analytics"
-db := fw.DB.Use("legado")      // banco "legado"
+func MinhaView(fw *bootstrap.Framework) router.HandlerFunc {
+    return func(ctx *router.Context) {
+        db          := fw.DB.Use()               // primeiro banco do .env (padrão)
+        dbAnalytics := fw.DB.Use("analytics")    // banco cujo DB_NAME=analytics
+        dbLegado    := fw.DB.Use("legado")        // banco cujo DB_NAME=legado
+
+        posts, err := orm.From[models.Post](db).All()
+        stats, err := orm.From[models.Stat](dbAnalytics).All()
+        _ = dbLegado
+    }
+}
 ```
+
+> `Use()` sem argumento é equivalente a `Use("default")` e sempre retorna o primeiro banco habilitado no `.env`.
 
 ### Múltiplas conexões em runtime
 
@@ -1572,11 +1584,27 @@ http://localhost:8000/kyrux/debug/
 
 Exibe:
 
-| Seção       | Informações                                              |
-|-------------|----------------------------------------------------------|
-| Aplicação   | Nome, versão, ambiente, endereço, uptime                 |
-| Runtime     | Go version, OS/arch, workers, goroutines, heap, GC cycles |
-| Rotas       | Todas as rotas registradas com método e path             |
+| Seção            | Informações                                                                 |
+|------------------|-----------------------------------------------------------------------------|
+| Aplicação        | Nome, versão, ambiente, endereço, workers, uptime                           |
+| Runtime          | Go version, OS/arch, goroutines, heap alocado, heap total, GC cycles        |
+| Bancos de Dados  | Cada conexão registrada: nome, driver e status ao vivo (online / offline)   |
+| Cache            | Status habilitado/desabilitado e número de entradas ativas                  |
+| Rotas            | Todas as rotas registradas com método e path                                |
+
+### Navegação
+
+- A **página de boas-vindas** (`/`) exibe um botão **⚙ Debug** que leva diretamente ao dashboard.
+- O **debug dashboard** exibe um botão **← Início** no header que retorna à rota raiz do projeto.
+
+### Status dos bancos de dados
+
+O status é verificado via `Ping` com timeout de 2 segundos a cada acesso ao dashboard. O indicador visual é:
+
+- `●` verde — conexão respondendo normalmente
+- `●` vermelho — conexão inacessível ou timeout
+
+> O debug dashboard só é registrado em `APP_ENV=development`. Em produção a rota não existe.
 
 ---
 

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"sync"
@@ -37,6 +38,7 @@ func (db *DB) Transaction(fn func(tx *sql.Tx) error) error {
 type Manager struct {
 	mu    sync.RWMutex
 	conns map[string]*DB
+	order []string
 }
 
 func NewManager() *Manager {
@@ -51,12 +53,41 @@ func (m *Manager) Add(name, driver, dsn string) error {
 		return err
 	}
 	m.mu.Lock()
+	if _, exists := m.conns[name]; !exists {
+		m.order = append(m.order, name)
+	}
 	m.conns[name] = db
 	m.mu.Unlock()
 	return nil
 }
 
-// Use retorna a conexão pelo nome (padrão: "default").
+// ConnInfo descreve uma conexão registrada no Manager.
+type ConnInfo struct {
+	Name   string
+	Driver string
+	Status string // "online" | "offline"
+}
+
+// Info retorna o status de todas as conexões registradas na ordem de inserção.
+func (m *Manager) Info() []ConnInfo {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]ConnInfo, 0, len(m.order))
+	for _, name := range m.order {
+		db := m.conns[name]
+		status := "online"
+		if err := db.PingContext(ctx); err != nil {
+			status = "offline"
+		}
+		result = append(result, ConnInfo{Name: name, Driver: db.Driver, Status: status})
+	}
+	return result
+}
+
+// Use retorna a conexão pelo nome. Sem argumento retorna a conexão "default";
+// se não houver uma conexão chamada "default", retorna a primeira registrada.
 func (m *Manager) Use(name ...string) *DB {
 	key := "default"
 	if len(name) > 0 && name[0] != "" {
@@ -64,7 +95,13 @@ func (m *Manager) Use(name ...string) *DB {
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.conns[key]
+	if db, ok := m.conns[key]; ok {
+		return db
+	}
+	if len(m.order) > 0 {
+		return m.conns[m.order[0]]
+	}
+	return nil
 }
 
 // Close encerra todas as conexões registradas.

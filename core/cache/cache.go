@@ -43,6 +43,13 @@ func (c *Cache) Delete(key string) {
 	c.mu.Unlock()
 }
 
+// Len retorna o número de entradas atualmente no cache (incluindo expiradas ainda não coletadas).
+func (c *Cache) Len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.entries)
+}
+
 func (c *Cache) gc() {
 	for range time.Tick(time.Minute) {
 		c.mu.Lock()

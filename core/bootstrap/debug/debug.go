@@ -5,6 +5,8 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"kyrux/core/cache"
+	"kyrux/core/database"
 	kyerrors "kyrux/core/errors"
 	"kyrux/core/router"
 	"net/http"
@@ -20,6 +22,11 @@ var (
 	startTime = time.Now()
 )
 
+type cacheInfo struct {
+	Enabled bool
+	Entries int
+}
+
 type dashData struct {
 	AppName    string
 	Version    string
@@ -34,13 +41,25 @@ type dashData struct {
 	HeapAlloc  string
 	HeapSys    string
 	NumGC      uint32
+	Databases  []database.ConnInfo
+	Cache      cacheInfo
 	Routes     []kyerrors.RouteEntry
 }
 
-func Handler(appName, version, env, addr string, workers int, routesFn func() []kyerrors.RouteEntry) router.HandlerFunc {
+func Handler(appName, version, env, addr string, workers int, routesFn func() []kyerrors.RouteEntry, dbm *database.Manager, c *cache.Cache) router.HandlerFunc {
 	return func(ctx *router.Context) {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
+
+		ci := cacheInfo{Enabled: c != nil}
+		if c != nil {
+			ci.Entries = c.Len()
+		}
+
+		var dbs []database.ConnInfo
+		if dbm != nil {
+			dbs = dbm.Info()
+		}
 
 		d := dashData{
 			AppName:    appName,
@@ -56,6 +75,8 @@ func Handler(appName, version, env, addr string, workers int, routesFn func() []
 			HeapAlloc:  fmtBytes(ms.HeapAlloc),
 			HeapSys:    fmtBytes(ms.HeapSys),
 			NumGC:      ms.NumGC,
+			Databases:  dbs,
+			Cache:      ci,
 			Routes:     routesFn(),
 		}
 

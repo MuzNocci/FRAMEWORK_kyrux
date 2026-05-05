@@ -93,20 +93,13 @@ func Init(envPath string) (*Framework, error) {
 	store := session.NewStore(time.Duration(cfg.Security.SessionTTL) * time.Second)
 
 	dbm := database.NewManager()
-	for i, db := range cfg.Databases {
+	for _, db := range cfg.Databases {
 		if !db.Enabled {
 			log.Printf("bootstrap: database '%s' disabled\n", db.Name)
 			continue
 		}
-		if i == 0 {
-			if err := dbm.Add("default", db.Driver, db.DSN); err != nil {
-				return nil, fmt.Errorf("bootstrap: db [%s]: %w", db.Name, err)
-			}
-		}
-		if db.Name != "default" {
-			if err := dbm.Add(db.Name, db.Driver, db.DSN); err != nil {
-				return nil, fmt.Errorf("bootstrap: db [%s]: %w", db.Name, err)
-			}
+		if err := dbm.Add(db.Name, db.Driver, db.DSN); err != nil {
+			return nil, fmt.Errorf("bootstrap: db [%s]: %w", db.Name, err)
 		}
 		log.Printf("bootstrap: database '%s' connected\n", db.Name)
 	}
@@ -130,7 +123,7 @@ func Init(envPath string) (*Framework, error) {
 
 	for _, appName := range cfg.InstalledApps {
 		if fn, ok := registry[appName]; ok {
-			fn(r)
+			fn(r, f)
 			log.Printf("bootstrap: app '%s' registrado\n", appName)
 		} else {
 			log.Printf("bootstrap: app '%s' listado em InstalledApps mas não importado\n", appName)
@@ -152,7 +145,7 @@ func Init(envPath string) (*Framework, error) {
 		r.HandlePrefix("GET /__kyrux_reload__", lr)
 		log.Println("bootstrap: hotreload ativo")
 
-		r.Internal("GET /kyrux/debug/", kydebug.Handler(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr, cfg.Server.Workers, r.Routes))
+		r.Internal("GET /kyrux/debug/", kydebug.Handler(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr, cfg.Server.Workers, r.Routes, f.DB, f.Cache))
 		log.Printf("bootstrap: debug em http://%s/kyrux/debug/\n", addr)
 	}
 

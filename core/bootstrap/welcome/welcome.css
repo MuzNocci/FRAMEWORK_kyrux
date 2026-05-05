@@ -24,6 +24,10 @@ h1 .highlight{color:var(--go-blue)}
 .info-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
 .info-value{font-size:.85rem;font-weight:600;color:var(--go-blue-light);font-family:"SF Mono","Fira Code",monospace}
 .info-value.ok{color:#3FB950}
+.actions{display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.5rem 1.2rem;border-radius:8px;font-size:.82rem;font-weight:500;cursor:pointer;text-decoration:none;transition:opacity .15s,border-color .15s,color .15s}
+.btn-primary{background:var(--go-blue);color:#fff}.btn-primary:hover{opacity:.85}
+.btn-ghost{border:1px solid var(--border);color:var(--muted);background:transparent}.btn-ghost:hover{border-color:var(--go-blue);color:var(--go-blue)}
 footer{border-top:1px solid var(--border);padding:.75rem 2rem;text-align:center;font-size:.82rem;color:var(--muted);flex-shrink:0}
 footer a{color:var(--go-blue);text-decoration:none}
 footer a:hover{text-decoration:underline}
