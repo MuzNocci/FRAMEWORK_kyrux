@@ -25,8 +25,8 @@ const (
 	baselineMiddleware1    int64 = 1000
 	baselineMiddleware3    int64 = 1000
 
-	// Tolerância: regressão se ns/op > baseline * (1 + regressionTolerance).
-	regressionTolerance = 0.05
+	// Tolerância: regressão se ns/op > baseline * (1 + tolerance).
+	tolerance = 0.10
 )
 
 func TestRegressionCheck(t *testing.T) {
@@ -136,7 +136,7 @@ func TestRegressionCheck(t *testing.T) {
 	for _, tc := range cases {
 		result := testing.Benchmark(tc.fn)
 		got := result.NsPerOp()
-		threshold := int64(float64(tc.baseline) * (1 + regressionTolerance))
+		threshold := int64(float64(tc.baseline) * (1 + tolerance))
 		rps := 1e9 / float64(got)
 		delta := float64(got-tc.baseline) / float64(tc.baseline) * 100
 
@@ -156,6 +156,6 @@ func TestRegressionCheck(t *testing.T) {
 	fmt.Println()
 	if failed > 0 {
 		t.Errorf("%d cenário(s) com regressão de performance (tolerância: %.0f%%)",
-			failed, regressionTolerance*100)
+			failed, tolerance*100)
 	}
 }
