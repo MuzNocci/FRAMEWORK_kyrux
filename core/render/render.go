@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	kyerrors "kyrux/core/errors"
 	"kyrux/core/router"
@@ -259,13 +260,24 @@ func (e *Engine) Render(w http.ResponseWriter, name string, data any) error {
 	if isDebug() {
 		inject += reloadScript
 	}
-	s := strings.Replace(buf.String(), "</body>", inject+"</body>", 1)
-	bufPool.Put(buf)
+
+	raw := buf.Bytes()
+	idx := bytes.Index(raw, []byte("</body>"))
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Length", strconv.Itoa(len(s)))
-	_, err := w.Write([]byte(s))
-	return err
+
+	var writeErr error
+	if idx < 0 {
+		h.Set("Content-Length", strconv.Itoa(len(raw)))
+		_, writeErr = w.Write(raw)
+	} else {
+		h.Set("Content-Length", strconv.Itoa(len(raw)+len(inject)))
+		w.Write(raw[:idx])
+		io.WriteString(w, inject)
+		_, writeErr = w.Write(raw[idx:])
+	}
+	bufPool.Put(buf)
+	return writeErr
 }
 
 func (e *Engine) RenderToString(name string, data any) (string, error) {
