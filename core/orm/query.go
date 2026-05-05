@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"kyrux/core/database"
+	"kyrux/core/security/crypton"
 	"sort"
 	"strings"
 )
@@ -107,11 +108,33 @@ func (q *Query[T]) Update(values map[string]any) error {
 	}
 	sort.Strings(keys)
 
+	// Índice coluna → Field para aplicar hash/encrypt.
+	colMeta := make(map[string]Field, len(q.meta.Fields))
+	for _, f := range q.meta.Fields {
+		colMeta[f.Column] = f
+	}
+
 	setClauses := make([]string, 0, len(keys))
 	args := make([]any, 0, len(keys)+len(q.args))
 	for _, col := range keys {
 		setClauses = append(setClauses, col+" = ?")
-		args = append(args, values[col])
+		val := values[col]
+		if f, ok := colMeta[col]; ok {
+			if f.IsHash {
+				if s, ok2 := val.(string); ok2 && !strings.HasPrefix(s, "$argon2id$") {
+					if hashed, err := crypton.HashPassword(s); err == nil {
+						val = hashed
+					}
+				}
+			} else if f.IsEncrypt {
+				if s, ok2 := val.(string); ok2 {
+					if enc, err := crypton.Encrypt(s); err == nil {
+						val = enc
+					}
+				}
+			}
+		}
+		args = append(args, val)
 	}
 	args = append(args, q.args...)
 
@@ -142,6 +165,62 @@ func (q *Query[T]) Delete() error {
 	return nil
 }
 
+// Page contém o resultado paginado de uma consulta.
+type Page[T any] struct {
+	Items      []T
+	Total      int64
+	Page       int
+	PageSize   int
+	TotalPages int
+	HasNext    bool
+	HasPrev    bool
+}
+
+// Paginate executa a consulta com paginação e retorna uma Page[T] com dados e metadados.
+// page começa em 1; pageSize define o número de itens por página.
+// Os filtros Where e OrderBy aplicados antes são respeitados.
+func (q *Query[T]) Paginate(page, pageSize int) (Page[T], error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+
+	total, err := q.Count()
+	if err != nil {
+		return Page[T]{}, fmt.Errorf("orm: paginate: %w", err)
+	}
+
+	totalPages := int((total + int64(pageSize) - 1) / int64(pageSize))
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	offset := (page - 1) * pageSize
+	sqlStr, args := q.buildSelectPage(pageSize, offset)
+	rows, err := q.db.Query(sqlStr, args...)
+	if err != nil {
+		return Page[T]{}, fmt.Errorf("orm: paginate: %w", err)
+	}
+	defer rows.Close()
+
+	items, err := scanRows[T](rows, q.meta)
+	if err != nil {
+		return Page[T]{}, err
+	}
+
+	return Page[T]{
+		Items:      items,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+		HasNext:    page < totalPages,
+		HasPrev:    page > 1,
+	}, nil
+}
+
 // buildSelect monta o SQL SELECT respeitando os filtros, ordem e limite.
 // O parâmetro forceLimit substitui q.limit quando > 0 (usado por First).
 func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
@@ -167,5 +246,23 @@ func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 	if q.offset > 0 {
 		fmt.Fprintf(&sb, " OFFSET %d", q.offset)
 	}
+	return rewritePlaceholders(q.db.Driver, sb.String()), q.args
+}
+
+// buildSelectPage monta o SELECT com LIMIT/OFFSET fixos, ignorando q.limit e q.offset.
+func (q *Query[T]) buildSelectPage(pageSize, offset int) (string, []any) {
+	var sb strings.Builder
+	sb.WriteString("SELECT * FROM ")
+	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
+
+	if len(q.where) > 0 {
+		sb.WriteString(" WHERE ")
+		sb.WriteString(strings.Join(q.where, " AND "))
+	}
+	if q.orderBy != "" {
+		sb.WriteString(" ORDER BY ")
+		sb.WriteString(q.orderBy)
+	}
+	fmt.Fprintf(&sb, " LIMIT %d OFFSET %d", pageSize, offset)
 	return rewritePlaceholders(q.db.Driver, sb.String()), q.args
 }

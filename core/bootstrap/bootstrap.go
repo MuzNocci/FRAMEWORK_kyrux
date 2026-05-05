@@ -15,6 +15,7 @@ import (
 	"kyrux/core/router"
 	"kyrux/core/security/auth"
 	"kyrux/core/security/csrf"
+	"kyrux/core/security/crypton"
 	secmiddleware "kyrux/core/security/middleware"
 	"kyrux/core/security/session"
 	"kyrux/core/settings"
@@ -49,6 +50,9 @@ func Init(envPath string) (*Framework, error) {
 
 	cfg := settings.Load()
 
+	crypton.SetPepper(cfg.Security.Pepper)
+	crypton.SetEncryptionKey(cfg.Security.EncryptionKey)
+	auth.SetDBEnabled(cfg.Database.Enabled)
 	render.SetDebug(cfg.App.Debug)
 	kyerrors.SetDebug(cfg.App.Debug)
 	csrf.SetSecure(!cfg.App.Debug)
@@ -59,6 +63,9 @@ func Init(envPath string) (*Framework, error) {
 		}
 		if len(cfg.Security.SecretKey) < 32 {
 			log.Fatal("bootstrap: SECRET_KEY muito curta — use no mínimo 32 caracteres em produção")
+		}
+		if cfg.Security.Pepper == "" || cfg.Security.Pepper == "your-strong-random-pepper-here" {
+			log.Fatal("bootstrap: PASSWORD_PEPPER não definida — defina um pepper forte no .env antes de rodar em produção")
 		}
 		if cfg.Database.Enabled && strings.Contains(cfg.Database.DSN, "sslmode=disable") {
 			log.Println("bootstrap: AVISO — DB_DSN contém sslmode=disable; use TLS em produção")

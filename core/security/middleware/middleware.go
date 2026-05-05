@@ -4,7 +4,9 @@ import (
 	kyerrors "kyrux/core/errors"
 	"kyrux/core/router"
 	"kyrux/core/security/auth"
+	"kyrux/core/security/session"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"strings"
 )
@@ -90,6 +92,32 @@ func SecureHeaders(next router.HandlerFunc) router.HandlerFunc {
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:")
 		next(ctx)
+	}
+}
+
+// RequireLogin protege rotas SSR que exigem sessão ativa.
+// É um no-op completo quando DB_ENABLED=false — nenhuma leitura de sessão ocorre.
+// Se não houver sessão válida, redireciona para loginURL com ?next=<caminho_atual>.
+// Caso contrário, coloca a sessão em ctx com a chave "session".
+func RequireLogin(store *session.Store, loginURL string) router.MiddlewareFunc {
+	return func(next router.HandlerFunc) router.HandlerFunc {
+		return func(ctx *router.Context) {
+			if !auth.IsDBEnabled() {
+				next(ctx)
+				return
+			}
+			sess, ok := session.FromRequest(ctx.Request, store)
+			if !ok {
+				dest, _ := url.Parse(loginURL)
+				q := dest.Query()
+				q.Set("next", ctx.Request.URL.RequestURI())
+				dest.RawQuery = q.Encode()
+				http.Redirect(ctx.Writer, ctx.Request, dest.String(), http.StatusFound)
+				return
+			}
+			ctx.Set("session", sess)
+			next(ctx)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package orm
 import (
 	"database/sql"
 	"fmt"
+	"kyrux/core/security/crypton"
 	"reflect"
 )
 
@@ -13,10 +14,10 @@ func scanRows[T any](rows *sql.Rows, meta *ModelMeta) ([]T, error) {
 		return nil, fmt.Errorf("orm: columns: %w", err)
 	}
 
-	// Mapa coluna → GoIndex, construído uma vez por query.
-	colToField := make(map[string]int, len(meta.Fields))
+	// Mapas coluna → campo, construídos uma vez por query.
+	colToField := make(map[string]Field, len(meta.Fields))
 	for _, f := range meta.Fields {
-		colToField[f.Column] = f.GoIndex
+		colToField[f.Column] = f
 	}
 
 	dests := make([]any, len(cols))
@@ -27,8 +28,8 @@ func scanRows[T any](rows *sql.Rows, meta *ModelMeta) ([]T, error) {
 		v := reflect.ValueOf(&zero).Elem()
 
 		for i, col := range cols {
-			if idx, ok := colToField[col]; ok {
-				fv := v.Field(idx)
+			if f, ok := colToField[col]; ok {
+				fv := v.Field(f.GoIndex)
 				if fv.CanAddr() {
 					dests[i] = fv.Addr().Interface()
 					continue
@@ -41,6 +42,19 @@ func scanRows[T any](rows *sql.Rows, meta *ModelMeta) ([]T, error) {
 		if err := rows.Scan(dests...); err != nil {
 			return nil, fmt.Errorf("orm: scan: %w", err)
 		}
+
+		// Decifra campos marcados com kyrux:"encrypt".
+		for _, col := range cols {
+			if f, ok := colToField[col]; ok && f.IsEncrypt {
+				fv := v.Field(f.GoIndex)
+				if fv.Kind() == reflect.String && fv.CanSet() {
+					if dec, err := crypton.Decrypt(fv.String()); err == nil {
+						fv.SetString(dec)
+					}
+				}
+			}
+		}
+
 		results = append(results, zero)
 	}
 	if err := rows.Err(); err != nil {

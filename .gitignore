@@ -42,3 +42,6 @@ Thumbs.db
 # Media uploads (user-generated content — use external storage in production)
 /medias/*
 !/medias/.gitkeep
+
+/database/*
+/database/

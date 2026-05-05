@@ -76,6 +76,12 @@ func (m *Manager) Close() {
 	}
 }
 
+// Open abre uma conexão direta sem registrá-la no Manager.
+// Indicado para ferramentas CLI que não precisam do Manager completo.
+func Open(driver, dsn string) (*DB, error) {
+	return open(driver, dsn)
+}
+
 func open(driver, dsn string) (*DB, error) {
 	db, err := sql.Open(driver, dsn)
 	if err != nil {

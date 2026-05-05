@@ -10,6 +10,7 @@ import (
 	"os/exec"
 
 	_ "kyrux/core/apps"
+	_ "github.com/lib/pq"
 )
 
 func main() {

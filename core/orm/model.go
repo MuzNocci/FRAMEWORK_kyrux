@@ -10,11 +10,14 @@ import (
 
 // Field descreve um campo do struct mapeado a uma coluna SQL.
 type Field struct {
-	Name    string
-	Column  string
-	IsPK    bool
-	GoIndex int
-	Size    int // kyrux:"size:N" — usado por migrations
+	Name      string
+	Column    string
+	IsPK      bool
+	IsHash    bool // kyrux:"hash"    — auto-hash Argon2id na escrita
+	IsEncrypt bool // kyrux:"encrypt" — auto-cifra AES-256-GCM na escrita, decifra na leitura
+	GoIndex   int
+	Size      int    // kyrux:"size:N" — usado por migrations
+	Default   string // kyrux:"default:value" — valor padrão SQL se campo for vazio
 }
 
 // ModelMeta contém os metadados pré-computados de um model.
@@ -67,10 +70,16 @@ func buildMeta(t reflect.Type) *ModelMeta {
 			switch {
 			case part == "pk":
 				f.IsPK = true
+			case part == "hash":
+				f.IsHash = true
+			case part == "encrypt":
+				f.IsEncrypt = true
 			case strings.HasPrefix(part, "column:"):
 				f.Column = strings.TrimPrefix(part, "column:")
 			case strings.HasPrefix(part, "size:"):
 				f.Size, _ = strconv.Atoi(strings.TrimPrefix(part, "size:"))
+			case strings.HasPrefix(part, "default:"):
+				f.Default = strings.TrimPrefix(part, "default:")
 			}
 		}
 		meta.Fields = append(meta.Fields, f)
@@ -96,10 +105,11 @@ func toSnake(s string) string {
 }
 
 // pluralSnake converte um nome de tipo em nome de tabela snake_case plural.
-//   User        → users
-//   Category    → categories
-//   Address     → addresses
-//   UserProfile → user_profiles
+//
+//	User        → users
+//	Category    → categories
+//	Address     → addresses
+//	UserProfile → user_profiles
 func pluralSnake(typeName string) string {
 	s := toSnake(typeName)
 	switch {

@@ -42,9 +42,11 @@ type CacheSettings struct {
 }
 
 type SecuritySettings struct {
-	SecretKey   string
-	SessionTTL  int
-	AllowedHost []string
+	SecretKey     string
+	SessionTTL    int
+	AllowedHost   []string
+	Pepper        string
+	EncryptionKey string
 }
 
 // InstalledApps é preenchido pelo core/apps/installed.go do projeto via init().
@@ -98,9 +100,11 @@ func Load() *Settings {
 			Addr:    environment.Get("CACHE_ADDR"),
 		},
 		Security: SecuritySettings{
-			SecretKey:   environment.GetOr("SECRET_KEY", "change-me"),
-			SessionTTL:  intOr(environment.Get("SESSION_TTL"), 3600),
-			AllowedHost: parseHosts(environment.Get("ALLOWED_HOSTS")),
+			SecretKey:     environment.GetOr("SECRET_KEY", "change-me"),
+			SessionTTL:    intOr(environment.Get("SESSION_TTL"), 3600),
+			AllowedHost:   parseHosts(environment.Get("ALLOWED_HOSTS")),
+			Pepper:        environment.Get("PASSWORD_PEPPER"),
+			EncryptionKey: environment.Get("FIELD_ENCRYPTION_KEY"),
 		},
 	}
 }

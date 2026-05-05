@@ -17,16 +17,17 @@ Criado por Müller Nocciolli · [www.kyrux.com.br/docs](https://www.kyrux.com.br
 8. [CSRF](#8-csrf)
 9. [Middleware](#9-middleware)
 10. [Banco de Dados](#10-banco-de-dados)
-11. [ORM](#11-orm)
-12. [Cache](#12-cache)
-13. [Sessões](#13-sessões)
-14. [Autenticação JWT](#14-autenticação-jwt)
-15. [EventBus](#15-eventbus)
-16. [Realtime (DOM sem JS)](#16-realtime-dom-sem-js)
-17. [Páginas de Erro](#17-páginas-de-erro)
-18. [Debug Dashboard](#18-debug-dashboard)
-19. [Fluxo do Sistema](#19-fluxo-do-sistema)
-20. [Performance](#20-performance)
+11. [Migrations](#11-migrations)
+12. [ORM](#12-orm)
+13. [Cache](#13-cache)
+14. [Sessões](#14-sessões)
+15. [Autenticação](#15-autenticação)
+16. [EventBus](#16-eventbus)
+17. [Realtime (DOM sem JS)](#17-realtime-dom-sem-js)
+18. [Páginas de Erro](#18-páginas-de-erro)
+19. [Debug Dashboard](#19-debug-dashboard)
+20. [Fluxo do Sistema](#20-fluxo-do-sistema)
+21. [Performance](#21-performance)
 
 ---
 
@@ -123,7 +124,21 @@ CACHE_ADDR=localhost:6379
 # ── Segurança ─────────────────────────────────────────────────────
 SECRET_KEY=sua-chave-secreta-forte-aqui
 SESSION_TTL=3600        # duração da sessão em segundos
+
+# Pepper aplicado antes do hash Argon2id — nunca armazenar no banco
+# Gere com: openssl rand -base64 32
+PASSWORD_PEPPER=seu-pepper-forte-aqui
+
+# Chave AES-256-GCM para campos kyrux:"encrypt" — nunca armazenar no banco
+# Gere com: openssl rand -base64 32
+FIELD_ENCRYPTION_KEY=sua-chave-de-criptografia-forte-aqui
+
+# ── Runtime (opcional) ────────────────────────────────────────────
+# Percentual de GC do Go. Padrão: 100. Reduzir (ex: 75) diminui heap, aumenta frequência de GC.
+# RUNTIME_GOGC=75
 ```
+
+> Em produção `SECRET_KEY`, `PASSWORD_PEPPER`, `FIELD_ENCRYPTION_KEY` e `ALLOWED_HOSTS` são **obrigatórios** — o servidor recusa iniciar sem eles.
 
 ---
 
@@ -150,6 +165,52 @@ go run main.go removeapp <nome>
 ```
 
 Remove a pasta e desfaz o registro. Pede confirmação antes.
+
+### Gerar migrations automáticas
+
+```bash
+go run main.go makemigrations
+```
+
+Lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go` e em `core/security/auth/*.go`, detecta tabelas ainda não migradas e gera um arquivo `database/migrations/NNNN_auto.sql`. **Revise o arquivo antes de aplicar.**
+
+### Aplicar migrations
+
+```bash
+go run main.go migrate
+```
+
+Aplica todos os arquivos `.sql` em `database/migrations/` que ainda não foram executados. Registra cada migration na tabela `kyrux_migrations` — idempotente. Requer `DB_ENABLED=true`.
+
+### Criar superusuário
+
+```bash
+go run main.go createsuperuser
+```
+
+Cria interativamente um usuário com `is_admin=true` e `is_staff=true`. Requer `DB_ENABLED=true`.
+
+O campo marcado com `kyrux:"login"` no model `auth.User` é sempre obrigatório. O outro identificador (username ou e-mail) é solicitado como opcional — se informado, também é verificado quanto à unicidade.
+
+### Criar usuário comum
+
+```bash
+go run main.go createuser
+```
+
+Cria interativamente um usuário comum (pergunta se é staff). Requer `DB_ENABLED=true`.
+
+Segue o mesmo comportamento do `createsuperuser` quanto ao campo de login obrigatório e identificador opcional.
+
+### Remover migration
+
+```bash
+go run main.go removemigration 0003        # remove apenas do disco
+go run main.go removemigration 0003 all    # remove do disco + da tabela kyrux_migrations
+```
+
+Remove a migration pelo número (prefixo `NNNN`). A variante `all` requer `DB_ENABLED=true`.
+Útil para corrigir uma migration gerada com erro antes de aplicá-la em produção.
 
 ---
 
@@ -386,6 +447,50 @@ html, err := render.Partial("blog", "partials/lista.html", map[string]any{
 })
 ```
 
+### Context Processors — variáveis globais nos templates
+
+Um ContextProcessor é uma função que adiciona variáveis ao contexto de **todo** template de um app — sem precisar passá-las manualmente em cada view.
+
+```go
+import "kyrux/core/render"
+
+// Processor global: disponível em TODOS os templates de TODOS os apps
+render.AddDefaultProcessor(func(ctx *router.Context) map[string]any {
+    return map[string]any{
+        "site_nome": "Meu Site",
+        "ano_atual": time.Now().Year(),
+    }
+})
+```
+
+Acesso no template (com ponto):
+```html
+<footer>{{ .site_nome }} — {{ .ano_atual }}</footer>
+```
+
+Processors são acumulados: cada chamada a `AddDefaultProcessor` adiciona um novo — não substitui os anteriores.
+
+### Funções personalizadas nos templates
+
+Registre funções Go para uso em todos os templates via `render.AddFunc`:
+
+```go
+import "kyrux/core/render"
+
+// Registrar antes de qualquer render (ex: no init() do app ou no bootstrap)
+render.AddFunc("formatarData", func(t time.Time) string {
+    return t.Format("02/01/2006")
+})
+
+render.AddFunc("upper", strings.ToUpper)
+```
+
+Uso no template:
+```html
+<span>{{ .post.CriadoEm | formatarData }}</span>
+<h1>{{ .titulo | upper }}</h1>
+```
+
 ### Arquivos estáticos
 
 ```html
@@ -453,22 +558,30 @@ Registrados no `bootstrap` — já ativos por padrão:
 
 ### Middlewares opcionais
 
+| Middleware | Uso | Descrição |
+|---|---|---|
+| `Compress` | `r.Use(middleware.Compress)` | Compressão gzip das respostas |
+| `CORS(origins)` | `r.Use(secmiddleware.CORS(...))` | Cabeçalhos CORS para as origens permitidas |
+| `SecureHeaders` | `r.Use(secmiddleware.SecureHeaders)` | HSTS, X-Frame-Options, CSP (produção) |
+| `RequireAuth(a)` | por rota ou global | Exige Bearer token JWT — APIs stateless |
+| `RequireLogin(store, url)` | por rota ou global | Exige sessão ativa — views SSR; redireciona para `url` se não autenticado |
+
 ```go
 import (
     "kyrux/core/middleware"
     secmiddleware "kyrux/core/security/middleware"
 )
 
-// Compressão gzip (global)
+// Compressão gzip
 r.Use(middleware.Compress)
 
 // CORS
-r.Use(secmiddleware.CORS([]string{
-    "https://meusite.com.br",
-    "https://app.meusite.com.br",
-}))
+r.Use(secmiddleware.CORS([]string{"https://meusite.com.br"}))
 
-// Exigir autenticação JWT (por rota ou global)
+// Exigir sessão ativa em views SSR — redireciona para /login/ se não autenticado
+r.Use(secmiddleware.RequireLogin(fw.Sessions, "/login/"))
+
+// Exigir JWT em rotas de API
 r.Use(secmiddleware.RequireAuth(fw.Auth))
 ```
 
@@ -490,10 +603,17 @@ r.Use(LogMiddleware)
 
 ```go
 func Register(r *router.Router) {
-    protegido := secmiddleware.RequireAuth(fw.Auth)
-
-    r.Handle("GET /dashboard/", protegido(func(ctx *router.Context) {
+    // Rota SSR protegida por sessão
+    loginRequired := secmiddleware.RequireLogin(fw.Sessions, "/login/")
+    r.Handle("GET /dashboard/", loginRequired(func(ctx *router.Context) {
         render.For("painel").Render(ctx, "dashboard.html", nil)
+    }))
+
+    // Rota de API protegida por JWT
+    jwtRequired := secmiddleware.RequireAuth(fw.Auth)
+    r.Handle("GET /api/perfil/", jwtRequired(func(ctx *router.Context) {
+        claims := ctx.Get("claims").(*auth.Claims)
+        ctx.JSON(200, map[string]string{"user_id": claims.UserID})
     }))
 }
 ```
@@ -577,7 +697,7 @@ db := fw.DB.Use().WithSchema("tenant_abc")
 ```
 
 Todas as queries executadas com essa conexão usarão `tenant_abc.<tabela>` automaticamente.
-Veja a seção [ORM](#11-orm) para uso completo com multi-tenant.
+Veja a seção [ORM](#12-orm) para uso completo com multi-tenant.
 
 ### Drivers suportados
 
@@ -595,7 +715,99 @@ Veja a seção [ORM](#11-orm) para uso completo com multi-tenant.
 
 ---
 
-## 11. ORM
+## 11. Migrations
+
+O Kyrux inclui um sistema de migrations baseado em arquivos `.sql` numerados, com rastreamento automático de quais já foram aplicadas.
+
+### Como funciona
+
+- Arquivos `.sql` ficam em `database/migrations/`
+- O nome segue o padrão `NNNN_descricao.sql` (ex: `0001_create_users.sql`)
+- A tabela `kyrux_migrations` rastreia o que já foi aplicado — criada automaticamente no primeiro `migrate`
+- Cada migration é aplicada **uma única vez** (idempotente)
+- Se a tabela já existe no banco mesmo que o arquivo tenha sido removido, apenas registra a migration sem reexecutar o SQL
+
+### Gerar migrations automaticamente (`makemigrations`)
+
+O comando lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go` e `core/security/auth/*.go`, compara com as tabelas já migradas e gera o SQL:
+
+```bash
+go run main.go makemigrations
+```
+
+O arquivo `NNNN_auto.sql` gerado usa `CREATE TABLE IF NOT EXISTS` com tipos adequados ao `DB_DRIVER` configurado.
+
+> Revise o arquivo gerado antes de aplicar — índices compostos, constraints e defaults personalizados devem ser ajustados manualmente.
+
+### Aplicar migrations (`migrate`)
+
+```bash
+go run main.go migrate
+```
+
+Aplica todos os arquivos `.sql` ainda não registrados em `kyrux_migrations`. Múltiplas instruções SQL por arquivo são suportadas (separadas por `;`).
+
+**Comportamento inteligente:**
+- Se o arquivo SQL ainda existe: executa normalmente e registra
+- Se o arquivo foi removido mas a tabela existe no banco: apenas registra (evita erros de "table already exists")
+- Se já foi registrada: pula (status `~`)
+
+### Remover uma migration (`removemigration`)
+
+```bash
+# Remove apenas do disco (permite regenerar a migration)
+go run main.go removemigration 0001
+
+# Remove do disco E do banco de dados
+go run main.go removemigration 0001 all
+```
+
+Uso comum: após `removemigration 0001 all`, você pode rodar `makemigrations` novamente para regenerar a migration com correções.
+
+### Tipos SQL gerados
+
+| Tipo Go | PostgreSQL | MySQL / SQLite |
+|---|---|---|
+| `string` (sem `size`) | `TEXT` | `TEXT` |
+| `string` + `kyrux:"size:N"` | `VARCHAR(N)` | `VARCHAR(N)` |
+| `int`, `int32` | `INTEGER` | `INTEGER` |
+| `int64` | `BIGINT` | `INTEGER` |
+| `float32`, `float64` | `DECIMAL` | `DECIMAL` |
+| `bool` | `BOOLEAN` | `BOOLEAN` |
+| `time.Time` | `TIMESTAMPTZ` | `DATETIME` |
+| campo `kyrux:"pk"` | `BIGSERIAL PRIMARY KEY` | `INTEGER PRIMARY KEY` |
+| campo `kyrux:"unique"` | `CREATE UNIQUE INDEX` | `CREATE UNIQUE INDEX` |
+
+Campos com ponteiro (`*string`, `*int`) são gerados sem `NOT NULL`. Campos não-ponteiro recebem `NOT NULL DEFAULT <zero>`.
+
+### Migrations manuais
+
+Para alterações que o `makemigrations` não cobre (ALTER TABLE, índices compostos, dados iniciais):
+
+```sql
+-- database/migrations/0002_add_slug_to_posts.sql
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS slug VARCHAR(200) NOT NULL DEFAULT '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS posts_slug_idx ON posts (slug);
+```
+
+Execute com `go run main.go migrate`.
+
+### Estrutura do diretório
+
+```
+database/
+└── migrations/
+    ├── 0001_create_users.sql    ← incluída pelo framework (auth.User)
+    ├── 0002_auto.sql            ← gerada por makemigrations
+    └── 0003_add_slug.sql        ← escrita manualmente
+```
+
+> `makemigrations` **não** gera migrations de ALTER TABLE — apenas cria novas tabelas. Para mudanças em tabelas existentes, escreva a migration manualmente.
+
+---
+
+## 12. ORM
 
 ORM leve e fluente integrado ao framework. Usa generics, reflection cacheada e SQL explícito com placeholders — sem magia, sem surpresas.
 
@@ -610,10 +822,18 @@ Um model é qualquer struct Go com campos exportados. Use a tag `kyrux` para con
 ```go
 type Post struct {
     ID        int64     `kyrux:"pk"`
-    Titulo    string
-    Slug      string
-    Publicado bool
-    CriadoEm time.Time `kyrux:"column:criado_em"`
+    Titulo    string    `kyrux:"size:200"`
+    Slug      string    `kyrux:"size:200,unique"`
+    Publicado bool      `kyrux:"default:false"`
+    CriadoEm time.Time `kyrux:"column:criado_em,default:NOW()"`
+}
+
+// Model com campos sensíveis:
+type Cliente struct {
+    ID    int64  `kyrux:"pk"`
+    Nome  string
+    CPF   string `kyrux:"size:14,encrypt"` // AES-256-GCM: cifrado no banco, decifrado na leitura
+    Token string `kyrux:"hash"`            // Argon2id: hash na escrita, nunca revertido
 }
 ```
 
@@ -621,8 +841,18 @@ type Post struct {
 
 | Tag | Descrição |
 |---|---|
-| `kyrux:"pk"` | Marca como chave primária. Ignorado no INSERT, preenchido de volta após criação. |
-| `kyrux:"column:nome"` | Override do nome da coluna SQL. Por padrão é `snake_case` do nome do campo. |
+| `kyrux:"pk"` | Chave primária. Ignorado no INSERT, preenchido de volta após criação. |
+| `kyrux:"column:nome"` | Override do nome da coluna SQL. Padrão: `snake_case` do nome do campo Go. |
+| `kyrux:"size:N"` | Tamanho máximo — usado no `makemigrations` para gerar `VARCHAR(N)`. |
+| `kyrux:"unique"` | Gera `CREATE UNIQUE INDEX` no `makemigrations` (efeito apenas na migration). |
+| `kyrux:"default:valor"` | Valor SQL usado no INSERT quando o campo for zero Go. Ex: `default:NOW()`, `default:true`, `default:0`. Literal SQL — sem placeholder `?`. |
+| `kyrux:"hash"` | Hash automático **Argon2id+pepper** na escrita (Create/Update). Nunca revertido. |
+| `kyrux:"encrypt"` | **AES-256-GCM** — cifra na escrita, decifra automaticamente na leitura. Requer `FIELD_ENCRYPTION_KEY`. |
+| `kyrux:"login"` | Exclusivo do `auth.User`. Marca o campo de login (username ou email). Apenas um campo por struct. Imutável após o primeiro migrate. |
+
+> **`default:valor`** — quando o campo tiver valor zero Go (`""`, `0`, `false`),
+> o ORM usa o literal diretamente no SQL (`VALUES (..., NOW(), ...)`), sem passar como argumento.
+> Útil para timestamps, UUIDs e qualquer função SQL de banco.
 
 #### Nome da tabela
 
@@ -729,6 +959,46 @@ err := orm.From[Post](db).
     Delete()
 ```
 
+### Paginação
+
+`Paginate` executa um `COUNT(*)` + `SELECT` com `LIMIT/OFFSET` em uma só chamada e retorna metadados prontos para uso no template.
+
+```go
+page := ctx.QueryInt("page", 1)
+
+p, err := orm.From[Post](db).
+    Where("publicado = ?", true).
+    OrderBy("criado_em DESC").
+    Paginate(page, 20) // página atual, itens por página
+
+// p.Items      → []Post da página atual
+// p.Total      → total de registros
+// p.TotalPages → número de páginas
+// p.HasNext    → true se há próxima página
+// p.HasPrev    → true se há página anterior
+// p.Page       → página atual
+// p.PageSize   → itens por página
+
+render.For("blog").Render(ctx, "lista.html", map[string]any{
+    "page": p,
+})
+```
+
+No template:
+
+```html
+{{ range .page.Items }}
+    <article>{{ .Titulo }}</article>
+{{ end }}
+
+{{ if .page.HasPrev }}
+    <a href="?page={{ sub .page.Page 1 }}">← Anterior</a>
+{{ end }}
+{{ if .page.HasNext }}
+    <a href="?page={{ add .page.Page 1 }}">Próxima →</a>
+{{ end }}
+```
+
 ### Multi-tenant com schema
 
 ```go
@@ -806,7 +1076,7 @@ func ListaView(ctx *router.Context) {
 
 ---
 
-## 12. Cache
+## 13. Cache
 
 Cache em memória com TTL. Ativado via `CACHE_ENABLED=true`.
 
@@ -847,123 +1117,230 @@ func ListaView(ctx *router.Context) {
 
 ---
 
-## 13. Sessões
+## 14. Sessões
 
-Sessões em memória server-side com TTL configurável via `SESSION_TTL`.
+Sessões em memória server-side com TTL configurável via `SESSION_TTL`. O cookie `kyrux_session` é `HttpOnly`, `SameSite=Strict` e `Secure` em produção (HTTPS).
 
-### Criar sessão
+### API de sessão direta
+
+Use quando precisar de controle total sobre o que é guardado na sessão:
 
 ```go
+import "kyrux/core/security/session"
+
+// Criar sessão manualmente
+sess, err := fw.Sessions.New()
+sess.Values["chave"] = valor
+session.SetCookie(ctx.Writer, sess.ID, ctx.Request.TLS != nil)
+
+// Ler sessão do request
+sess, ok := session.FromRequest(ctx.Request, fw.Sessions)
+
+// Remover sessão
+fw.Sessions.Delete(sess.ID)
+```
+
+> Para autenticação com `auth.User`, use `auth.Login` e `auth.Logout` — veja a seção [15. Autenticação](#15-autenticação).
+
+---
+
+## 15. Autenticação
+
+O Kyrux oferece dois modelos de autenticação: **SSR por sessão** (views HTML) e **JWT stateless** (APIs). Ambos coexistem.
+
+### Model de usuário padrão
+
+`auth.User` é o model de usuário do sistema, disponível em `kyrux/core/security/auth`.
+
+```go
+type User struct {
+    ID        int64     `kyrux:"column:id,pk"`
+    UUID      string    `kyrux:"column:uuid,size:36"`
+    FirstName string    `kyrux:"column:first_name,size:150"`
+    LastName  string    `kyrux:"column:last_name,size:150"`
+    Username  string    `kyrux:"column:username,size:150,unique,login"` // campo de login padrão
+    Email     *string   `kyrux:"column:email,size:254,unique"`           // opcional quando não é login
+    Password  string    `kyrux:"column:password,size:128"`
+    Group     string    `kyrux:"column:user_group,size:100"`
+    IsAdmin   bool      `kyrux:"column:is_admin"`
+    IsStaff   bool      `kyrux:"column:is_staff"`
+    IsActive  bool      `kyrux:"column:is_active,default:true"` // nova conta ativa por padrão
+    CreatedAt time.Time `kyrux:"column:created_at"`
+    UpdatedAt time.Time `kyrux:"column:updated_at"`
+}
+```
+
+A tag `login` marca qual campo é usado para autenticação. Apenas um campo pode ter essa tag. Trocar o campo após o primeiro migrate exige uma nova migration — trate como decisão de schema.
+
+`Email *string` é ponteiro porque é opcional quando `Username` é o campo de login. O banco permite múltiplos `NULL` sem violar o índice `UNIQUE`. Quando `Email` tiver a tag `login`, `Username` passa a ser o campo opcional.
+
+`auth.LoginFieldName()` retorna o nome do campo Go marcado com `login` (`"Username"` ou `"Email"`). Útil para adaptar formulários e lógica de autenticação dinamicamente:
+
+```go
+field := auth.LoginFieldName() // "Username" — determinado pelas tags do model
+```
+
+O hash de senha usa **Argon2id** (64 MB, 3 iterações, 4 threads) com pepper definido em `PASSWORD_PEPPER`.
+
+```go
+// E-mail é *string — use ponteiro ou nil
+email := "joao@exemplo.com"
+user := &auth.User{Username: "joao", Email: &email}
+user.SetPassword("minha-senha-forte")   // hash Argon2id + pepper
+user.CheckPassword("minha-senha-forte") // → true
+user.FullName()                         // → "João Silva"
+
+// Sem e-mail (campo opcional quando login = username)
+user := &auth.User{Username: "joao", Email: nil}
+```
+
+### Autenticação SSR (sessão + cookie)
+
+Indicada para views HTML renderizadas no servidor. O campo de login é determinado pela tag `kyrux:"login"` no model `auth.User` — por padrão `username`. Alterar esse campo após o primeiro migrate equivale a uma mudança de schema e exige nova migration.
+
+#### Login
+
+```go
+import "kyrux/core/security/auth"
+
 func LoginView(ctx *router.Context) {
-    // ... validar credenciais ...
+    if ctx.Request.Method == http.MethodGet {
+        render.For("auth").Render(ctx, "login.html", nil)
+        return
+    }
 
-    sess, err := fw.Sessions.New()
-    if err != nil {
+    // Use o nome do campo de login definido no model (tag kyrux:"login")
+    loginValue := ctx.Request.FormValue(strings.ToLower(auth.LoginFieldName()))
+    password   := ctx.Request.FormValue("password")
+
+    _, err := auth.Login(fw.DB.Use(), fw.Sessions, ctx.Writer, ctx.Request, loginValue, password)
+    switch err {
+    case nil:
+        ctx.Redirect("/dashboard/", http.StatusFound)
+    case auth.ErrUserNotFound, auth.ErrWrongPassword:
+        render.For("auth").Render(ctx, "login.html", map[string]any{
+            "erro": "Usuário ou senha inválidos.",
+        })
+    case auth.ErrInactiveUser:
+        render.For("auth").Render(ctx, "login.html", map[string]any{
+            "erro": "Conta inativa.",
+        })
+    default:
         ctx.Error(500)
-        return
     }
-
-    sess.Values["usuario_id"] = usuario.ID
-    sess.Values["nome"] = usuario.Nome
-
-    session.SetCookie(ctx.Writer, sess.ID, true) // true = Secure (HTTPS em produção)
-
-    ctx.Redirect("/dashboard/", http.StatusFound)
 }
 ```
 
-### Ler sessão
-
-```go
-func DashboardView(ctx *router.Context) {
-    sess, ok := session.FromRequest(ctx.Request, fw.Sessions)
-    if !ok {
-        ctx.Redirect("/login/", http.StatusFound)
-        return
-    }
-
-    usuarioID := sess.Values["usuario_id"].(int)
-    render.For("painel").Render(ctx, "dashboard.html", map[string]any{
-        "usuario_id": usuarioID,
-    })
-}
-```
-
-### Encerrar sessão (logout)
+#### Logout
 
 ```go
 func LogoutView(ctx *router.Context) {
-    if c, err := ctx.Request.Cookie(session.CookieName()); err == nil {
-        fw.Sessions.Delete(c.Value)
-    }
-    http.SetCookie(ctx.Writer, &http.Cookie{
-        Name:    session.CookieName(),
-        Value:   "",
-        MaxAge:  -1,
-        Path:    "/",
-    })
+    auth.Logout(fw.Sessions, ctx.Request, ctx.Writer)
     ctx.Redirect("/login/", http.StatusFound)
 }
 ```
 
----
-
-## 14. Autenticação JWT
-
-Para APIs e autenticação stateless.
-
-### Gerar token
+#### Obter usuário logado
 
 ```go
-func LoginAPIView(ctx *router.Context) {
-    // ... validar usuário ...
-
-    token, err := fw.Auth.GenerateToken(
-        strconv.Itoa(usuario.ID),
-        24*time.Hour,
-    )
+func DashboardView(ctx *router.Context) {
+    user, err := auth.GetUser(fw.DB.Use(), fw.Sessions, ctx.Request)
     if err != nil {
-        ctx.Error(500)
+        ctx.Redirect("/login/", http.StatusFound)
         return
     }
-
-    ctx.JSON(200, map[string]string{"token": token})
+    render.For("painel").Render(ctx, "dashboard.html", map[string]any{
+        "user": user,
+    })
 }
 ```
 
-### Validar token manualmente
-
-```go
-claims, err := fw.Auth.ValidateToken(token)
-if err != nil {
-    ctx.JSON(401, map[string]string{"error": "não autorizado"})
-    return
-}
-usuarioID := claims.UserID
-expira := claims.ExpiresAt
-```
-
-### Middleware `RequireAuth`
-
-Protege rotas automaticamente. O token deve vir no header `Authorization: Bearer <token>`.
+#### Proteger rotas com `RequireLogin`
 
 ```go
 import secmiddleware "kyrux/core/security/middleware"
 
-// Proteger rota individual
+// Rota individual
+loginRequired := secmiddleware.RequireLogin(fw.Sessions, "/login/")
+r.Handle("GET /dashboard/", loginRequired(DashboardView))
+
+// Todas as rotas do app
+r.Use(secmiddleware.RequireLogin(fw.Sessions, "/login/"))
+```
+
+A sessão fica disponível em `ctx.Get("session")` dentro da view protegida:
+
+```go
+sess := ctx.Get("session").(*session.Session)
+```
+
+#### Redirecionamento `?next=` pós-login
+
+`RequireLogin` adiciona automaticamente `?next=<URL atual>` ao redirect para o login. Após autenticar, use `auth.NextURL` para redirecionar o usuário de volta:
+
+```go
+func LoginView(ctx *router.Context) {
+    if ctx.Request.Method == http.MethodPost {
+        _, err := auth.Login(fw.DB.Use(), fw.Sessions, ctx.Writer, ctx.Request,
+            ctx.Request.FormValue("username"),
+            ctx.Request.FormValue("password"),
+        )
+        if err == nil {
+            // auth.NextURL lê ?next= e valida que é URL relativa (proteção open redirect)
+            dest := auth.NextURL(ctx.Request, "/dashboard/")
+            ctx.Redirect(dest, http.StatusFound)
+            return
+        }
+        // ... tratar erro ...
+    }
+    render.For("auth").Render(ctx, "login.html", nil)
+}
+```
+
+`auth.NextURL(r, fallback)` aceita apenas URLs relativas começando com `/` (não `//`) — qualquer tentativa de open redirect é ignorada e o fallback é retornado.
+
+---
+
+### Autenticação JWT (APIs stateless)
+
+Indicada para APIs consumidas por clientes externos (mobile, SPA, etc.).
+
+#### Gerar token
+
+```go
+func LoginAPIView(ctx *router.Context) {
+    // ... validar usuário ...
+    token, err := fw.Auth.GenerateToken(strconv.FormatInt(user.ID, 10), 24*time.Hour)
+    if err != nil {
+        ctx.Error(500)
+        return
+    }
+    ctx.JSON(200, map[string]string{"token": token})
+}
+```
+
+#### Validar token manualmente
+
+```go
+claims, err := fw.Auth.ValidateToken(token)
+// claims.UserID    string
+// claims.ExpiresAt time.Time
+```
+
+#### Middleware `RequireAuth`
+
+O token deve vir no header `Authorization: Bearer <token>`. As claims ficam em `ctx.Get("claims")`.
+
+```go
 r.Handle("GET /api/perfil/", secmiddleware.RequireAuth(fw.Auth)(func(ctx *router.Context) {
-    v, _ := ctx.Get("claims")
-    claims := v.(*auth.Claims)
+    claims := ctx.Get("claims").(*auth.Claims)
     ctx.JSON(200, map[string]string{"user_id": claims.UserID})
 }))
-
-// Ou aplicar globalmente para todas as rotas do app
-r.Use(secmiddleware.RequireAuth(fw.Auth))
 ```
 
 ---
 
-## 15. EventBus
+## 16. EventBus
 
 Sistema de eventos desacoplados. Útil para comunicação entre apps sem importação direta.
 
@@ -1001,7 +1378,7 @@ fw.Events.Unsubscribe("usuario.criado")
 
 ---
 
-## 16. Realtime (DOM sem JS)
+## 17. Realtime (DOM sem JS)
 
 O Kyrux injeta automaticamente um WebSocket em toda página renderizada. O desenvolvedor não escreve nenhum JS — apenas atributos HTML e funções Go.
 
@@ -1054,7 +1431,7 @@ Zero JavaScript escrito pelo desenvolvedor.
 
 ---
 
-## 17. Páginas de Erro
+## 18. Páginas de Erro
 
 ### Comportamento por ambiente
 
@@ -1101,7 +1478,7 @@ errors.Set(500, func(w http.ResponseWriter, r *http.Request) {
 
 ---
 
-## 18. Debug Dashboard
+## 19. Debug Dashboard
 
 Disponível automaticamente em `APP_ENV=development`:
 
@@ -1119,7 +1496,7 @@ Exibe:
 
 ---
 
-## 19. Fluxo do Sistema
+## 20. Fluxo do Sistema
 
 ### Fluxo de uma requisição
 
@@ -1169,7 +1546,7 @@ Usuário A faz POST /posts/criar/
 
 ---
 
-## 20. Performance
+## 21. Performance
 
 Benchmarks medidos com `ab` (HTTP real, TCP, keep-alive) e suite `testing.B` do Go.
 Hardware: Intel Core i5-1235U · Go 1.26.2 · Linux · **SERVER_WORKERS=4** (conforme `.env`).
@@ -1336,6 +1713,11 @@ orm.From[T](db).Count()                        // (int64, error)
 .Limit(n)
 .Offset(n)
 
+// Paginação
+orm.From[T](db).Where(...).OrderBy("id DESC").Paginate(page, 20)
+// → (Page[T], error)
+// Page[T]: Items, Total, Page, PageSize, TotalPages, HasNext, HasPrev
+
 // Escrita
 orm.Create(db, &model)                         // error — preenche PK
 orm.From[T](db).Where(...).Update(map[string]any{...}) // error
@@ -1344,6 +1726,47 @@ orm.From[T](db).Where(...).Delete()            // error
 // Multi-tenant
 db := fw.DB.Use().WithSchema("tenant_abc")
 orm.From[T](db).All()  // → SELECT * FROM tenant_abc.tabela
+```
+
+### ORM — tags do model
+
+| Tag | Efeito |
+|---|---|
+| `kyrux:"pk"` | Chave primária — ignorado no INSERT, preenchido após criação |
+| `kyrux:"column:nome"` | Override do nome da coluna SQL |
+| `kyrux:"size:N"` | VARCHAR(N) no makemigrations |
+| `kyrux:"unique"` | CREATE UNIQUE INDEX no makemigrations (apenas migration) |
+| `kyrux:"default:valor"` | Valor SQL literal no INSERT se campo for zero Go |
+| `kyrux:"hash"` | Hash Argon2id+pepper automático na escrita; nunca revertido |
+| `kyrux:"encrypt"` | AES-256-GCM: cifra na escrita, decifra na leitura |
+| `kyrux:"login"` | Exclusivo do `auth.User` — define o campo de login; imutável após migrate |
+
+### Auth — todos os métodos
+
+```go
+// Model
+user.SetPassword("senha")          // hash Argon2id + pepper
+user.CheckPassword("senha")        // bool
+user.FullName()                    // "Nome Sobrenome"
+
+// Campo de login (determinado pela tag kyrux:"login" no model User)
+auth.LoginFieldName()                              // string — "Username" ou "Email"
+
+// SSR (sessão)
+auth.Login(db, store, w, r, loginValue, password)  // (*session.Session, error)
+auth.Logout(store, r, w)                           // remove sessão + expira cookie
+auth.GetUser(db, store, r)                         // (*User, error)
+auth.NextURL(r, fallback)                          // string — lê ?next=, valida open redirect
+
+// JWT
+fw.Auth.GenerateToken(userID, ttl)  // (string, error)
+fw.Auth.ValidateToken(token)        // (*Claims, error)
+
+// Erros SSR
+auth.ErrUserNotFound
+auth.ErrWrongPassword
+auth.ErrInactiveUser
+auth.ErrAuthDisabled  // retornado quando DB_ENABLED=false
 ```
 
 ### Realtime — todos os métodos
@@ -1373,6 +1796,87 @@ fw.DB.Use("nome")                           // conexão nomeada
 fw.DB.Use().WithSchema("schema")            // cópia com schema (multi-tenant)
 fw.DB.Use().Transaction(func(tx) error { ... })
 fw.DB.Close()                               // encerrar todas
+```
+
+### Render — funções globais e processors
+
+```go
+// Funções customizadas para templates (disponíveis globalmente)
+render.AddFunc("nome", funcao)
+render.AddFunc("formatarData", func(t time.Time) string {
+    return t.Format("02/01/2006")
+})
+
+// ContextProcessors — variáveis injetadas em todos os templates de todos os apps
+render.AddDefaultProcessor(func(ctx *router.Context) map[string]any {
+    return map[string]any{"ano": time.Now().Year()}
+})
+
+// Renderizar fragmento para string (usado com Realtime)
+html, err := render.Partial("appName", "partials/lista.html", data)
+```
+
+### Crypton — utilitários de segurança
+
+```go
+// Setup (chamado pelo bootstrap automaticamente)
+crypton.SetPepper(pepper)
+crypton.SetEncryptionKey(key)
+
+// Senhas (Argon2id — formato PHC)
+crypton.HashPassword("senha")                  // (string, error) — $argon2id$...
+crypton.CheckPassword("senha", hash)           // bool — comparação em tempo-constante
+
+// Criptografia simétrica (AES-256-GCM)
+crypton.Encrypt("dado sensível")               // (string, error) — $enc$<base64>
+crypton.Decrypt("$enc$<base64>")              // (string, error)
+
+// Assinatura HMAC-SHA256
+crypton.Sign("payload", "secret")             // (string, error) — <b64>.<sig>
+crypton.Verify("token", "secret")             // (string, error) — payload ou erro
+
+// Aleatoriedade criptograficamente segura
+crypton.RandomBytes(32)                        // ([]byte, error)
+```
+
+### Errors — customização de páginas de erro
+
+```go
+import kyerrors "kyrux/core/errors"
+
+// Registrar handler customizado para código HTTP
+kyerrors.Set(404, func(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(404)
+    json.NewEncoder(w).Encode(map[string]string{"error": "não encontrado"})
+})
+
+kyerrors.Set(500, func(w http.ResponseWriter, r *http.Request) {
+    // renderizar template personalizado de erro 500
+})
+```
+
+Handlers registrados têm prioridade sobre o comportamento padrão em qualquer ambiente.
+
+### Session — API de baixo nível
+
+```go
+import "kyrux/core/security/session"
+
+// Criar sessão manualmente
+sess, err := fw.Sessions.New()
+sess.Values["chave"] = valor
+session.SetCookie(ctx.Writer, sess.ID, ctx.Request.TLS != nil)
+
+// Ler sessão do request
+sess, ok := session.FromRequest(ctx.Request, fw.Sessions)
+if !ok { /* sem sessão */ }
+
+// Acessar valores
+val := sess.Values["chave"]
+
+// Encerrar sessão
+fw.Sessions.Delete(sess.ID)
 ```
 
 ---

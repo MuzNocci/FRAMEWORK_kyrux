@@ -3,6 +3,7 @@ package orm
 import (
 	"fmt"
 	"kyrux/core/database"
+	"kyrux/core/security/crypton"
 	"reflect"
 	"strings"
 )
@@ -31,8 +32,38 @@ func Create(db *database.DB, model any) error {
 			continue
 		}
 		cols = append(cols, f.Column)
-		phs = append(phs, "?")
-		args = append(args, v.Field(f.GoIndex).Interface())
+
+		val := v.Field(f.GoIndex).Interface()
+
+		// Se o valor for zero e houver default, usar o default do SQL
+		if f.Default != "" && isZeroValue(val) {
+			phs = append(phs, f.Default)
+		} else {
+			phs = append(phs, "?")
+		}
+
+		if f.IsHash {
+			if s, ok := val.(string); ok && !strings.HasPrefix(s, "$argon2id$") {
+				hashed, err := crypton.HashPassword(s)
+				if err != nil {
+					return fmt.Errorf("orm: hash campo %s: %w", f.Column, err)
+				}
+				val = hashed
+			}
+		} else if f.IsEncrypt {
+			if s, ok := val.(string); ok {
+				enc, err := crypton.Encrypt(s)
+				if err != nil {
+					return fmt.Errorf("orm: encrypt campo %s: %w", f.Column, err)
+				}
+				val = enc
+			}
+		}
+
+		// Só adiciona arg se não for usando default SQL
+		if !(f.Default != "" && isZeroValue(v.Field(f.GoIndex).Interface())) {
+			args = append(args, val)
+		}
 	}
 
 	table := qualifiedTable(db, meta.Table)
@@ -104,4 +135,31 @@ func rewritePlaceholders(driver, query string) string {
 		}
 	}
 	return b.String()
+}
+
+// isZeroValue reporta se um valor é o zero value do seu tipo.
+func isZeroValue(val any) bool {
+	if val == nil {
+		return true
+	}
+	rv := reflect.ValueOf(val)
+	if rv.Kind() == reflect.Ptr {
+		return rv.IsNil()
+	}
+	switch v := val.(type) {
+	case string:
+		return v == ""
+	case int, int8, int16, int32, int64:
+		return v == 0
+	case uint, uint8, uint16, uint32, uint64:
+		return v == 0
+	case float32, float64:
+		return v == 0
+	case bool:
+		return !v
+	case []byte:
+		return len(v) == 0
+	default:
+		return false
+	}
 }

@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"kyrux/core/database"
+	dbmigrate "kyrux/core/database/migrate"
+	"kyrux/core/environment"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +40,37 @@ func Run(args []string) {
 				os.Exit(1)
 			}
 		}
+	case "migrate":
+		if err := runMigrate(); err != nil {
+			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+			os.Exit(1)
+		}
+	case "makemigrations":
+		if err := runMakeMigrations(); err != nil {
+			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+			os.Exit(1)
+		}
+	case "removemigration":
+		if len(args) < 2 {
+			printUsage()
+			os.Exit(1)
+		}
+		migNum := args[1]
+		removeAll := len(args) > 2 && args[2] == "all"
+		if err := runRemoveMigration(migNum, removeAll); err != nil {
+			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+			os.Exit(1)
+		}
+	case "createsuperuser":
+		if err := runCreateSuperuser(); err != nil {
+			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+			os.Exit(1)
+		}
+	case "createuser":
+		if err := runCreateUser(); err != nil {
+			fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "comando desconhecido: %s\n\n", command)
 		printUsage()
@@ -45,11 +79,41 @@ func Run(args []string) {
 }
 
 func printUsage() {
-	fmt.Println("uso: go run main.go <comando> [app]")
+	fmt.Println("uso: go run main.go <comando> [args]")
 	fmt.Println()
 	fmt.Println("comandos:")
-	fmt.Println("  startapp  <nome>   cria um novo app")
-	fmt.Println("  removeapp <nome>   remove um app existente")
+	fmt.Println("  startapp  <nome>              cria um novo app")
+	fmt.Println("  removeapp <nome>              remove um app existente")
+	fmt.Println("  migrate                       aplica migrações pendentes em database/migrations/")
+	fmt.Println("  makemigrations                gera migration SQL a partir dos models em apps/*/models/")
+	fmt.Println("  removemigration <num> [all]   remove migration do disco (ou disco+banco com 'all')")
+	fmt.Println("  createsuperuser               cria um superusuário (is_admin + is_staff)")
+	fmt.Println("  createuser                    cria um usuário comum")
+}
+
+// ── migrate ───────────────────────────────────────────────────────────────────
+
+func runMigrate() error {
+	_ = environment.Load(".env")
+
+	if environment.GetOr("DB_ENABLED", "false") != "true" {
+		return fmt.Errorf("DB_ENABLED=false — banco de dados não configurado")
+	}
+
+	driver := environment.GetOr("DB_DRIVER", "postgres")
+	dsn := environment.Get("DB_DSN")
+	if dsn == "" {
+		return fmt.Errorf("DB_DSN não configurado no .env")
+	}
+
+	db, err := database.Open(driver, dsn)
+	if err != nil {
+		return fmt.Errorf("conectar ao banco: %w", err)
+	}
+	defer db.Close()
+
+	fmt.Println("Aplicando migrações...")
+	return dbmigrate.Run(db, "database/migrations")
 }
 
 // ── startapp ──────────────────────────────────────────────────────────────────
