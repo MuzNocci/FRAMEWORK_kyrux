@@ -21,16 +21,18 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
 	_ "kyrux/core/apps"
 	"kyrux/core/bootstrap"
 	"kyrux/core/render"
+
+	_ "github.com/lib/pq"
 )
 
 // testParamByName substitui parâmetros pelo nome da variável.
@@ -78,6 +80,28 @@ func TestThroughputReal(t *testing.T) {
 	fw, err := bootstrap.Init("../../../.env")
 	if err != nil {
 		t.Fatalf("bootstrap.Init: %v", err)
+	}
+
+	// Se habilitado, captura perfis CPU/heap via runtime/pprof.
+	if os.Getenv("ENABLE_PPROF") == "1" {
+		// CPU
+		if out, err := os.Create("/tmp/kyrux_cpu.pprof"); err == nil {
+			if err := pprof.StartCPUProfile(out); err == nil {
+				defer func() {
+					pprof.StopCPUProfile()
+					out.Close()
+				}()
+			} else {
+				out.Close()
+			}
+		}
+		// Heap será escrito ao final do teste
+		defer func() {
+			if out, err := os.Create("/tmp/kyrux_heap.pprof"); err == nil {
+				pprof.WriteHeapProfile(out) //nolint:errcheck
+				out.Close()
+			}
+		}()
 	}
 
 	type scenario struct {

@@ -229,7 +229,7 @@ func cuPromptPassword() (string, error) {
 // ── helpers de DB e UUID ──────────────────────────────────────────────────────
 
 func cuCheckUnique(db *database.DB, col, val string) error {
-	n, err := orm.From[auth.User](db).Where(col+" = ?", val).Count()
+	n, err := orm.FromDB[auth.User](db).Where(col+" = ?", val).Count()
 	if err != nil {
 		return fmt.Errorf("verificar %s: %w", col, err)
 	}

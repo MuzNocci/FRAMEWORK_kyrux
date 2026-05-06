@@ -95,7 +95,7 @@ func Login(db *database.DB, store *session.Store, w http.ResponseWriter, r *http
 	if !dbEnabled {
 		return nil, ErrAuthDisabled
 	}
-	user, err := orm.From[User](db).Where(loginColumn+" = ?", loginValue).First()
+	user, err := orm.FromDB[User](db).Where(loginColumn+" = ?", loginValue).First()
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
@@ -146,7 +146,7 @@ func GetUser(db *database.DB, store *session.Store, r *http.Request) (*User, err
 	if !ok {
 		return nil, ErrUserNotFound
 	}
-	return orm.From[User](db).Where("id = ?", id).First()
+	return orm.FromDB[User](db).Where("id = ?", id).First()
 }
 
 // NextURL lê o parâmetro ?next= do request e valida que é uma URL relativa,

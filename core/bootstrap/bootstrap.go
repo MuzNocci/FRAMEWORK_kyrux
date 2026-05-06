@@ -9,6 +9,7 @@ import (
 	kyerrors "kyrux/core/errors"
 	"kyrux/core/environment"
 	"kyrux/core/events"
+	"kyrux/core/orm"
 	"kyrux/core/hotreload"
 	"kyrux/core/realtime"
 	"kyrux/core/render"
@@ -27,7 +28,6 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -52,8 +52,6 @@ func Init(envPath string) (*Framework, error) {
 
 	crypton.SetPepper(cfg.Security.Pepper)
 	crypton.SetEncryptionKey(cfg.Security.EncryptionKey)
-	anyDBEnabled := len(cfg.Databases) > 0 && cfg.Databases[0].Enabled
-	auth.SetDBEnabled(anyDBEnabled)
 	render.SetDebug(cfg.App.Debug)
 	kyerrors.SetDebug(cfg.App.Debug)
 	csrf.SetSecure(!cfg.App.Debug)
@@ -67,11 +65,6 @@ func Init(envPath string) (*Framework, error) {
 		}
 		if cfg.Security.Pepper == "" || cfg.Security.Pepper == "your-strong-random-pepper-here" {
 			log.Fatal("bootstrap: PASSWORD_PEPPER não definida — defina um pepper forte no .env antes de rodar em produção")
-		}
-		for _, db := range cfg.Databases {
-			if db.Enabled && strings.Contains(db.DSN, "sslmode=disable") {
-				log.Printf("bootstrap: AVISO — banco '%s' com sslmode=disable; use TLS em produção\n", db.Name)
-			}
 		}
 	}
 
@@ -92,17 +85,8 @@ func Init(envPath string) (*Framework, error) {
 	a := auth.New(cfg.Security.SecretKey)
 	store := session.NewStore(time.Duration(cfg.Security.SessionTTL) * time.Second)
 
-	dbm := database.NewManager()
-	for _, db := range cfg.Databases {
-		if !db.Enabled {
-			log.Printf("bootstrap: database '%s' disabled\n", db.Name)
-			continue
-		}
-		if err := dbm.Add(db.Name, db.Driver, db.DSN); err != nil {
-			return nil, fmt.Errorf("bootstrap: db [%s]: %w", db.Name, err)
-		}
-		log.Printf("bootstrap: database '%s' connected\n", db.Name)
-	}
+	dbm := orm.LoadDatabases()
+	auth.SetDBEnabled(orm.HasConnections())
 
 	f := &Framework{
 		Settings: cfg,

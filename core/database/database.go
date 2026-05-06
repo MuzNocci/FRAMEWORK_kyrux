@@ -15,6 +15,8 @@ type DB struct {
 	*sql.DB
 	Driver string
 	Schema string
+	stmtMu sync.RWMutex
+	stmts  map[string]*sql.Stmt
 }
 
 // WithSchema retorna uma cópia de DB com o schema definido — útil para multi-tenant.
@@ -45,6 +47,17 @@ type Manager struct {
 
 func NewManager() *Manager {
 	return &Manager{conns: make(map[string]*DB)}
+}
+
+// AddDB registra uma conexão já aberta no Manager sem reabri-la.
+// Útil quando a conexão foi criada externamente (ex: orm.LoadDatabases).
+func (m *Manager) AddDB(name string, db *DB) {
+	m.mu.Lock()
+	if _, exists := m.conns[name]; !exists {
+		m.order = append(m.order, name)
+	}
+	m.conns[name] = db
+	m.mu.Unlock()
 }
 
 // Add abre e registra uma conexão nomeada.
@@ -158,5 +171,47 @@ func open(driver, dsn string) (*DB, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("database: ping [%s]: %w", driver, err)
 	}
-	return &DB{DB: db, Driver: driver}, nil
+	return &DB{DB: db, Driver: driver, stmts: make(map[string]*sql.Stmt)}, nil
+}
+
+// PrepareCached prepara (se necessário) e retorna um *sql.Stmt armazenado em cache
+// para a query fornecida. A chave do cache é a query completa (após rewrite).
+func (db *DB) PrepareCached(query string) (*sql.Stmt, error) {
+	db.stmtMu.RLock()
+	if s, ok := db.stmts[query]; ok {
+		db.stmtMu.RUnlock()
+		return s, nil
+	}
+	db.stmtMu.RUnlock()
+
+	db.stmtMu.Lock()
+	defer db.stmtMu.Unlock()
+	if db.stmts == nil {
+		db.stmts = make(map[string]*sql.Stmt)
+	}
+	if s, ok := db.stmts[query]; ok {
+		return s, nil
+	}
+	s, err := db.DB.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	db.stmts[query] = s
+	return s, nil
+}
+
+// Close fecha statements em cache e a conexão subjacente.
+func (db *DB) Close() error {
+	if db == nil || db.DB == nil {
+		return nil
+	}
+	db.stmtMu.Lock()
+	for _, s := range db.stmts {
+		if s != nil {
+			_ = s.Close()
+		}
+	}
+	db.stmts = nil
+	db.stmtMu.Unlock()
+	return db.DB.Close()
 }

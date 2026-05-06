@@ -17,8 +17,8 @@ func Load(path string) error {
 	lines := strings.Split(string(data), "\n")
 	rawLines = make([]string, 0, len(lines))
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -27,10 +27,25 @@ func Load(path string) error {
 			continue
 		}
 		key = strings.TrimSpace(key)
-		if idx := strings.Index(value, " #"); idx != -1 {
-			value = value[:idx]
-		}
 		value = strings.TrimSpace(value)
+
+		// Coleta valores JSON multi-linha: acumula até que as chaves estejam balanceadas.
+		if len(value) > 0 && (value[0] == '{' || value[0] == '[') {
+			open := value[0]
+			close := map[byte]byte{'{': '}', '[': ']'}[open]
+			depth := countByte(value, open) - countByte(value, close)
+			for depth > 0 && i+1 < len(lines) {
+				i++
+				next := strings.TrimSpace(lines[i])
+				if next == "" || strings.HasPrefix(next, "#") {
+					continue
+				}
+				value += next
+				depth += countByte(next, open) - countByte(next, close)
+			}
+		} else if idx := strings.Index(value, " #"); idx != -1 {
+			value = strings.TrimSpace(value[:idx])
+		}
 
 		rawLines = append(rawLines, key+"="+value)
 
@@ -94,4 +109,15 @@ func GetBlocks(signalKey string) []map[string]string {
 	}
 
 	return blocks
+}
+
+// countByte conta quantas vezes o byte b aparece em s.
+func countByte(s string, b byte) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			n++
+		}
+	}
+	return n
 }
