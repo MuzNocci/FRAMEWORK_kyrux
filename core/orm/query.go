@@ -14,11 +14,20 @@ import (
 type Query[T any] struct {
 	db      *database.DB
 	meta    *ModelMeta
+	cols    []string
 	where   []string
 	args    []any
 	orderBy string
 	limit   int
 	offset  int
+}
+
+// Select define as colunas a retornar (ex: "id", "first_name", "email").
+// Sem chamada a Select, usa SELECT *.
+// Atenção: colunas não selecionadas ficam com zero value no struct resultante.
+func (q *Query[T]) Select(cols ...string) *Query[T] {
+	q.cols = cols
+	return q
 }
 
 // Where adiciona uma condição AND à cláusula WHERE.
@@ -246,7 +255,13 @@ func (q *Query[T]) Paginate(page, pageSize int) (Page[T], error) {
 // O parâmetro forceLimit substitui q.limit quando > 0 (usado por First).
 func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 	var sb strings.Builder
-	sb.WriteString("SELECT * FROM ")
+	sb.WriteString("SELECT ")
+	if len(q.cols) > 0 {
+		sb.WriteString(strings.Join(q.cols, ", "))
+	} else {
+		sb.WriteByte('*')
+	}
+	sb.WriteString(" FROM ")
 	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
 
 	if len(q.where) > 0 {
@@ -273,7 +288,13 @@ func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 // buildSelectPage monta o SELECT com LIMIT/OFFSET fixos, ignorando q.limit e q.offset.
 func (q *Query[T]) buildSelectPage(pageSize, offset int) (string, []any) {
 	var sb strings.Builder
-	sb.WriteString("SELECT * FROM ")
+	sb.WriteString("SELECT ")
+	if len(q.cols) > 0 {
+		sb.WriteString(strings.Join(q.cols, ", "))
+	} else {
+		sb.WriteByte('*')
+	}
+	sb.WriteString(" FROM ")
 	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
 
 	if len(q.where) > 0 {
