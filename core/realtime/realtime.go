@@ -3,6 +3,7 @@ package realtime
 import (
 	"encoding/json"
 	"kyrux/core/events"
+	"log"
 	"net/http"
 	"sync"
 )
@@ -15,9 +16,13 @@ type domUpdate struct {
 }
 
 func (h *Hub) sendDOM(target, html, action string) {
-	data, _ := json.Marshal(domUpdate{
+	data, err := json.Marshal(domUpdate{
 		Type: "kyrux:dom", Target: target, HTML: html, Action: action,
 	})
+	if err != nil {
+		log.Printf("realtime: marshal error: %v", err)
+		return
+	}
 	h.mu.RLock()
 	for _, c := range h.clients {
 		select {

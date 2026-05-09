@@ -5,13 +5,18 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"time"
 
 	"golang.org/x/net/websocket"
 )
 
+const wsReadTimeout = 60 * time.Second
+
 func clientID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("realtime: falha ao gerar client ID: %v", err))
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -48,6 +53,7 @@ func (c *Client) readPump() {
 	defer c.hub.Unregister(c.id)
 	var msg []byte
 	for {
+		c.conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		if err := websocket.Message.Receive(c.conn, &msg); err != nil {
 			break
 		}

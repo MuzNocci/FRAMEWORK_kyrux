@@ -14,12 +14,7 @@ func scanRows[T any](rows *sql.Rows, meta *ModelMeta) ([]T, error) {
 		return nil, fmt.Errorf("orm: columns: %w", err)
 	}
 
-	// Mapas coluna → campo, construídos uma vez por query.
-	colToField := make(map[string]Field, len(meta.Fields))
-	for _, f := range meta.Fields {
-		colToField[f.Column] = f
-	}
-
+	colToField := meta.ColToField
 	dests := make([]any, len(cols))
 	var results []T
 

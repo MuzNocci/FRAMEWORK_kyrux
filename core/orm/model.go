@@ -22,9 +22,10 @@ type Field struct {
 
 // ModelMeta contém os metadados pré-computados de um model.
 type ModelMeta struct {
-	Table   string
-	Fields  []Field
-	PKField *Field
+	Table      string
+	Fields     []Field
+	PKField    *Field
+	ColToField map[string]Field // índice coluna→Field pré-computado; evita rebuild por query
 }
 
 var metaCache sync.Map // map[reflect.Type]*ModelMeta
@@ -87,6 +88,10 @@ func buildMeta(t reflect.Type) *ModelMeta {
 			cp := f
 			meta.PKField = &cp
 		}
+	}
+	meta.ColToField = make(map[string]Field, len(meta.Fields))
+	for _, f := range meta.Fields {
+		meta.ColToField[f.Column] = f
 	}
 	return meta
 }

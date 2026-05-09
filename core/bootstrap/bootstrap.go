@@ -57,6 +57,7 @@ func Init(envPath string) (*Framework, error) {
 	kyerrors.SetDebug(cfg.App.Debug)
 	kyerrors.SetApp(cfg.App.Name, cfg.App.Version)
 	csrf.SetSecure(!cfg.App.Debug)
+	csrf.SetSecret(cfg.Security.SecretKey)
 
 	if !cfg.App.Debug {
 		if cfg.Security.SecretKey == "change-me" {
@@ -79,6 +80,7 @@ func Init(envPath string) (*Framework, error) {
 	r := router.New()
 	kyerrors.SetRouteListFunc(r.Routes)
 	r.Use(secmiddleware.Recovery())
+	r.Use(secmiddleware.MaxBodySize(32 << 20)) // 32 MB default
 	if !cfg.App.Debug {
 		r.Use(secmiddleware.SecureHeaders)
 	}
@@ -132,7 +134,7 @@ func Init(envPath string) (*Framework, error) {
 		r.HandlePrefix("GET /__kyrux_reload__", lr)
 		log.Println("bootstrap: hotreload ativo")
 
-		r.Internal("GET /kyrux/debug/", kydebug.Handler(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr, cfg.Server.Workers, r.Routes, f.DB, f.Cache))
+		r.Internal("GET /kyrux/debug/", secmiddleware.LocalhostOnly(kydebug.Handler(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr, cfg.Server.Workers, r.Routes, f.DB, f.Cache)))
 		log.Printf("bootstrap: debug em http://%s/kyrux/debug/\n", addr)
 	}
 

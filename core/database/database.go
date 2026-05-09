@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const maxCachedStmts = 512
+
 // DB encapsula *sql.DB com o nome do driver e um schema opcional.
 type DB struct {
 	*sql.DB
@@ -196,7 +198,9 @@ func (db *DB) PrepareCached(query string) (*sql.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.stmts[query] = s
+	if len(db.stmts) < maxCachedStmts {
+		db.stmts[query] = s
+	}
 	return s, nil
 }
 

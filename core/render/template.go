@@ -28,10 +28,18 @@ type compiledEntry struct {
 	execName string
 }
 
+// safeTmplPath valida que um caminho de template não tenta path traversal.
+func safeTmplPath(p string) bool {
+	return !strings.Contains(p, "..") && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "\\")
+}
+
 // preprocess converte a sintaxe Django-like para sintaxe Go template.
-func preprocess(raw string) (content, parent string) {
+func preprocess(raw string) (content, parent string, err error) {
 	if m := reExtends.FindStringSubmatch(raw); m != nil {
 		parent = m[1]
+		if !safeTmplPath(parent) {
+			return "", "", fmt.Errorf("render: caminho inválido em extends: %q", parent)
+		}
 		raw = reExtends.ReplaceAllString(raw, "")
 		raw = reBlock.ReplaceAllStringFunc(raw, func(s string) string {
 			return `{{define "` + reBlock.FindStringSubmatch(s)[1] + `"}}`
@@ -42,10 +50,22 @@ func preprocess(raw string) (content, parent string) {
 		})
 	}
 	raw = reEndBlock.ReplaceAllString(raw, `{{end}}`)
+	var includeErr error
 	raw = reInclude.ReplaceAllStringFunc(raw, func(s string) string {
-		return `{{template "` + reInclude.FindStringSubmatch(s)[1] + `" .}}`
+		if includeErr != nil {
+			return s
+		}
+		name := reInclude.FindStringSubmatch(s)[1]
+		if !safeTmplPath(name) {
+			includeErr = fmt.Errorf("render: caminho inválido em include: %q", name)
+			return s
+		}
+		return `{{template "` + name + `" .}}`
 	})
-	return strings.TrimSpace(raw), parent
+	if includeErr != nil {
+		return "", "", includeErr
+	}
+	return strings.TrimSpace(raw), parent, nil
 }
 
 func tmplRefs(content string) []string {
@@ -66,9 +86,14 @@ func (e *Engine) loadSources() error {
 		return nil
 	}
 
+	absBase, _ := filepath.Abs(e.dir)
 	err := filepath.WalkDir(e.dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || filepath.Ext(path) != ".html" {
 			return err
+		}
+		absPath, _ := filepath.Abs(path)
+		if !strings.HasPrefix(absPath, absBase+string(filepath.Separator)) && absPath != absBase {
+			return fmt.Errorf("render: path traversal detectado: %s", path)
 		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -76,7 +101,10 @@ func (e *Engine) loadSources() error {
 		}
 		rel, _ := filepath.Rel(e.dir, path)
 		name := filepath.ToSlash(rel)
-		content, parent := preprocess(string(raw))
+		content, parent, perr := preprocess(string(raw))
+		if perr != nil {
+			return perr
+		}
 		sources[name] = srcInfo{content: content, parent: parent}
 		return nil
 	})

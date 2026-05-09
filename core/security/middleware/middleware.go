@@ -19,7 +19,7 @@ func AllowedHosts(hosts []string, debug bool) router.MiddlewareFunc {
 			wildcard = true
 			break
 		}
-		allowed[h] = struct{}{}
+		allowed[strings.ToLower(h)] = struct{}{}
 	}
 	return func(next router.HandlerFunc) router.HandlerFunc {
 		return func(ctx *router.Context) {
@@ -27,7 +27,7 @@ func AllowedHosts(hosts []string, debug bool) router.MiddlewareFunc {
 				next(ctx)
 				return
 			}
-			host := ctx.Request.Host
+			host := strings.ToLower(ctx.Request.Host)
 			if i := strings.LastIndex(host, ":"); i != -1 {
 				host = host[:i]
 			}
@@ -69,9 +69,15 @@ func CORS(allowedOrigins []string) router.MiddlewareFunc {
 		return func(ctx *router.Context) {
 			origin := ctx.Request.Header.Get("Origin")
 			if _, ok := allowed[origin]; ok {
-				ctx.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+				h := ctx.Writer.Header()
+				h.Set("Access-Control-Allow-Origin", origin)
+				h.Set("Vary", "Origin")
 			}
 			if ctx.Request.Method == http.MethodOptions {
+				h := ctx.Writer.Header()
+				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+				h.Set("Access-Control-Max-Age", "86400")
 				ctx.Writer.WriteHeader(http.StatusNoContent)
 				return
 			}
@@ -80,8 +86,7 @@ func CORS(allowedOrigins []string) router.MiddlewareFunc {
 	}
 }
 
-// SecureHeaders adiciona cabeçalhos de segurança em produção:
-// HSTS, X-Content-Type-Options, X-Frame-Options e Referrer-Policy.
+// SecureHeaders adiciona cabeçalhos de segurança em produção.
 // Deve ser registrado com r.Use() no bootstrap quando !debug.
 func SecureHeaders(next router.HandlerFunc) router.HandlerFunc {
 	return func(ctx *router.Context) {
@@ -91,7 +96,53 @@ func SecureHeaders(next router.HandlerFunc) router.HandlerFunc {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		h.Set("X-Permitted-Cross-Domain-Policies", "none")
 		next(ctx)
+	}
+}
+
+// LocalhostOnly rejeita requisições que não venham de 127.0.0.1 ou ::1.
+// Use para proteger endpoints internos registrados com r.Internal().
+func LocalhostOnly(next router.HandlerFunc) router.HandlerFunc {
+	return func(ctx *router.Context) {
+		if !isLocalhost(ctx.Request.RemoteAddr) {
+			http.Error(ctx.Writer, "403 Forbidden", http.StatusForbidden)
+			return
+		}
+		next(ctx)
+	}
+}
+
+// LocalhostOnlyHandler é a variante http.Handler de LocalhostOnly.
+// Use para proteger handlers registrados com r.HandlePrefix().
+func LocalhostOnlyHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLocalhost(r.RemoteAddr) {
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLocalhost(remoteAddr string) bool {
+	ip := remoteAddr
+	if i := strings.LastIndex(ip, ":"); i != -1 {
+		ip = ip[:i]
+	}
+	ip = strings.Trim(ip, "[]")
+	return ip == "127.0.0.1" || ip == "::1"
+}
+
+// MaxBodySize limita o tamanho do corpo da requisição.
+// Use com r.Use() para aplicar globalmente ou por rota.
+func MaxBodySize(maxBytes int64) router.MiddlewareFunc {
+	return func(next router.HandlerFunc) router.HandlerFunc {
+		return func(ctx *router.Context) {
+			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, maxBytes)
+			next(ctx)
+		}
 	}
 }
 

@@ -5,9 +5,16 @@ import (
 	"fmt"
 	"kyrux/core/database"
 	"kyrux/core/security/crypton"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// reIdent valida nomes de coluna e expressões ORDER BY contra SQL injection.
+// Aceita: coluna, tabela.coluna, coluna ASC, coluna DESC.
+var reIdent = regexp.MustCompile(`(?i)^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?(\s+(ASC|DESC))?$`)
+
+func validIdent(s string) bool { return reIdent.MatchString(strings.TrimSpace(s)) }
 
 // Query é um builder fluente de consultas SQL para o tipo T.
 // Construa com orm.From[T](connName) ou orm.FromDB[T](db) e encadeie os métodos antes de executar.
@@ -20,12 +27,19 @@ type Query[T any] struct {
 	orderBy string
 	limit   int
 	offset  int
+	err     error
 }
 
 // Select define as colunas a retornar (ex: "id", "first_name", "email").
 // Sem chamada a Select, usa SELECT *.
 // Atenção: colunas não selecionadas ficam com zero value no struct resultante.
 func (q *Query[T]) Select(cols ...string) *Query[T] {
+	for _, c := range cols {
+		if !validIdent(c) {
+			q.err = fmt.Errorf("orm: select: identificador inválido: %q", c)
+			return q
+		}
+	}
 	q.cols = cols
 	return q
 }
@@ -42,6 +56,10 @@ func (q *Query[T]) Where(cond string, args ...any) *Query[T] {
 
 // OrderBy define a cláusula ORDER BY (ex: "created_at DESC").
 func (q *Query[T]) OrderBy(col string) *Query[T] {
+	if !validIdent(col) {
+		q.err = fmt.Errorf("orm: orderby: identificador inválido: %q", col)
+		return q
+	}
 	q.orderBy = col
 	return q
 }
@@ -60,6 +78,9 @@ func (q *Query[T]) Offset(n int) *Query[T] {
 
 // All executa a query e retorna todas as linhas encontradas.
 func (q *Query[T]) All() ([]T, error) {
+	if q.err != nil {
+		return nil, q.err
+	}
 	sqlStr, args := q.buildSelect(0)
 	rows, err := func() (*sql.Rows, error) {
 		if stmt, perr := q.db.PrepareCached(sqlStr); perr == nil {
@@ -77,6 +98,9 @@ func (q *Query[T]) All() ([]T, error) {
 // First retorna a primeira linha encontrada.
 // Retorna sql.ErrNoRows se nenhuma linha corresponder.
 func (q *Query[T]) First() (*T, error) {
+	if q.err != nil {
+		return nil, q.err
+	}
 	sqlStr, args := q.buildSelect(1)
 	rows, err := func() (*sql.Rows, error) {
 		if stmt, perr := q.db.PrepareCached(sqlStr); perr == nil {
@@ -100,12 +124,20 @@ func (q *Query[T]) First() (*T, error) {
 
 // Count retorna o número de linhas que correspondem ao filtro atual.
 func (q *Query[T]) Count() (int64, error) {
+	if q.err != nil {
+		return 0, q.err
+	}
 	var sb strings.Builder
 	sb.WriteString("SELECT COUNT(*) FROM ")
 	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
 	if len(q.where) > 0 {
 		sb.WriteString(" WHERE ")
-		sb.WriteString(strings.Join(q.where, " AND "))
+		for i, w := range q.where {
+			if i > 0 {
+				sb.WriteString(" AND ")
+			}
+			sb.WriteString(w)
+		}
 	}
 	sqlStr := rewritePlaceholders(q.db.Driver, sb.String())
 	var n int64
@@ -127,17 +159,19 @@ func (q *Query[T]) Update(values map[string]any) error {
 	if len(q.where) == 0 {
 		return fmt.Errorf("orm: update sem WHERE não é permitido")
 	}
+
+	colMeta := q.meta.ColToField
+	for col := range values {
+		if _, ok := colMeta[col]; !ok {
+			return fmt.Errorf("orm: update: coluna desconhecida: %q", col)
+		}
+	}
+
 	keys := make([]string, 0, len(values))
 	for k := range values {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-
-	// Índice coluna → Field para aplicar hash/encrypt.
-	colMeta := make(map[string]Field, len(q.meta.Fields))
-	for _, f := range q.meta.Fields {
-		colMeta[f.Column] = f
-	}
 
 	setClauses := make([]string, 0, len(keys))
 	args := make([]any, 0, len(keys)+len(q.args))
@@ -163,11 +197,19 @@ func (q *Query[T]) Update(values map[string]any) error {
 	}
 	args = append(args, q.args...)
 
-	sqlStr := fmt.Sprintf("UPDATE %s SET %s WHERE %s",
-		qualifiedTable(q.db, q.meta.Table),
-		strings.Join(setClauses, ", "),
-		strings.Join(q.where, " AND "),
-	)
+	var sb strings.Builder
+	sb.WriteString("UPDATE ")
+	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
+	sb.WriteString(" SET ")
+	sb.WriteString(strings.Join(setClauses, ", "))
+	sb.WriteString(" WHERE ")
+	for i, w := range q.where {
+		if i > 0 {
+			sb.WriteString(" AND ")
+		}
+		sb.WriteString(w)
+	}
+	sqlStr := sb.String()
 	if _, err := q.db.Exec(rewritePlaceholders(q.db.Driver, sqlStr), args...); err != nil {
 		return fmt.Errorf("orm: update: %w", err)
 	}
@@ -180,11 +222,17 @@ func (q *Query[T]) Delete() error {
 	if len(q.where) == 0 {
 		return fmt.Errorf("orm: delete sem WHERE não é permitido")
 	}
-	sqlStr := fmt.Sprintf("DELETE FROM %s WHERE %s",
-		qualifiedTable(q.db, q.meta.Table),
-		strings.Join(q.where, " AND "),
-	)
-	if _, err := q.db.Exec(rewritePlaceholders(q.db.Driver, sqlStr), q.args...); err != nil {
+	var dsb strings.Builder
+	dsb.WriteString("DELETE FROM ")
+	dsb.WriteString(qualifiedTable(q.db, q.meta.Table))
+	dsb.WriteString(" WHERE ")
+	for i, w := range q.where {
+		if i > 0 {
+			dsb.WriteString(" AND ")
+		}
+		dsb.WriteString(w)
+	}
+	if _, err := q.db.Exec(rewritePlaceholders(q.db.Driver, dsb.String()), q.args...); err != nil {
 		return fmt.Errorf("orm: delete: %w", err)
 	}
 	return nil
@@ -205,6 +253,9 @@ type Page[T any] struct {
 // page começa em 1; pageSize define o número de itens por página.
 // Os filtros Where e OrderBy aplicados antes são respeitados.
 func (q *Query[T]) Paginate(page, pageSize int) (Page[T], error) {
+	if q.err != nil {
+		return Page[T]{}, q.err
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -257,7 +308,12 @@ func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 	var sb strings.Builder
 	sb.WriteString("SELECT ")
 	if len(q.cols) > 0 {
-		sb.WriteString(strings.Join(q.cols, ", "))
+		for i, c := range q.cols {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(c)
+		}
 	} else {
 		sb.WriteByte('*')
 	}
@@ -266,7 +322,12 @@ func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 
 	if len(q.where) > 0 {
 		sb.WriteString(" WHERE ")
-		sb.WriteString(strings.Join(q.where, " AND "))
+		for i, w := range q.where {
+			if i > 0 {
+				sb.WriteString(" AND ")
+			}
+			sb.WriteString(w)
+		}
 	}
 	if q.orderBy != "" {
 		sb.WriteString(" ORDER BY ")
@@ -290,7 +351,12 @@ func (q *Query[T]) buildSelectPage(pageSize, offset int) (string, []any) {
 	var sb strings.Builder
 	sb.WriteString("SELECT ")
 	if len(q.cols) > 0 {
-		sb.WriteString(strings.Join(q.cols, ", "))
+		for i, c := range q.cols {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(c)
+		}
 	} else {
 		sb.WriteByte('*')
 	}
@@ -299,7 +365,12 @@ func (q *Query[T]) buildSelectPage(pageSize, offset int) (string, []any) {
 
 	if len(q.where) > 0 {
 		sb.WriteString(" WHERE ")
-		sb.WriteString(strings.Join(q.where, " AND "))
+		for i, w := range q.where {
+			if i > 0 {
+				sb.WriteString(" AND ")
+			}
+			sb.WriteString(w)
+		}
 	}
 	if q.orderBy != "" {
 		sb.WriteString(" ORDER BY ")

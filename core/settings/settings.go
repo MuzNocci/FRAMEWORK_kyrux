@@ -112,7 +112,7 @@ func Load() *Settings {
 			Debug:   env == "development",
 		},
 		Server: ServerSettings{
-			Host:    environment.GetOr("SERVER_HOST", "0.0.0.0"),
+			Host:    environment.GetOr("SERVER_HOST", "127.0.0.1"),
 			Port:    environment.GetOr("SERVER_PORT", "8000"),
 			Workers: intOr(environment.Get("SERVER_WORKERS"), runtime.NumCPU()),
 		},
