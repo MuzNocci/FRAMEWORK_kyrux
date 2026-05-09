@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"kyrux/core/bootstrap/assets"
 	"kyrux/core/bootstrap/welcome"
 	"kyrux/core/cache"
 	"kyrux/core/database"
@@ -54,6 +55,7 @@ func Init(envPath string) (*Framework, error) {
 	crypton.SetEncryptionKey(cfg.Security.EncryptionKey)
 	render.SetDebug(cfg.App.Debug)
 	kyerrors.SetDebug(cfg.App.Debug)
+	kyerrors.SetApp(cfg.App.Name, cfg.App.Version)
 	csrf.SetSecure(!cfg.App.Debug)
 
 	if !cfg.App.Debug {
@@ -114,6 +116,7 @@ func Init(envPath string) (*Framework, error) {
 		}
 	}
 
+	assets.Register(r)
 	welcome.RegisterIfNeeded(r)
 
 	r.Internal("GET /kyrux/websocket/ws/", func(ctx *router.Context) {

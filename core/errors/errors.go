@@ -31,6 +31,27 @@ var debugMode atomic.Bool
 
 func SetDebug(v bool) { debugMode.Store(v) }
 
+var atomicAppName, atomicVersion atomic.Value
+
+func SetApp(name, version string) {
+	atomicAppName.Store(name)
+	atomicVersion.Store(version)
+}
+
+func getAppName() string {
+	if v, _ := atomicAppName.Load().(string); v != "" {
+		return v
+	}
+	return environment.GetOr("APP_NAME", "kyrux")
+}
+
+func getVersion() string {
+	if v, _ := atomicVersion.Load().(string); v != "" {
+		return v
+	}
+	return environment.GetOr("APP_VERSION", "0.1.0")
+}
+
 // RouteEntry representa uma rota registrada, exibida na debug page de 404.
 type RouteEntry struct {
 	Method string
@@ -143,8 +164,8 @@ func renderDefault(w http.ResponseWriter, code int) {
 		Code:    code,
 		Title:   defs[0],
 		Message: defs[1],
-		AppName: environment.GetOr("APP_NAME", "kyrux"),
-		Version: environment.GetOr("APP_VERSION", "0.1.0"),
+		AppName: getAppName(),
+		Version: getVersion(),
 	}
 	var buf bytes.Buffer
 	if err := tpl.Execute(&buf, d); err != nil {
@@ -164,8 +185,8 @@ func renderDebugHTTP(w http.ResponseWriter, r *http.Request, code int) {
 		defs = [2]string{http.StatusText(code), ""}
 	}
 	d := debugData{
-		AppName: environment.GetOr("APP_NAME", "kyrux"),
-		Version: environment.GetOr("APP_VERSION", "0.1.0"),
+		AppName: getAppName(),
+		Version: getVersion(),
 		Code:    code,
 		Title:   defs[0],
 		Method:  r.Method,
@@ -179,8 +200,8 @@ func renderDebugHTTP(w http.ResponseWriter, r *http.Request, code int) {
 
 func renderDebugPanic(w http.ResponseWriter, r *http.Request, recovered any, stack []byte) {
 	d := debugData{
-		AppName: environment.GetOr("APP_NAME", "kyrux"),
-		Version: environment.GetOr("APP_VERSION", "0.1.0"),
+		AppName: getAppName(),
+		Version: getVersion(),
 		Method:  r.Method,
 		Path:    r.URL.Path,
 		Stack:   formatStack(stack),

@@ -340,8 +340,7 @@ var cssTpl = `*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;overflow:auto}
 header{border-bottom:1px solid var(--border);padding:.9rem 2.5rem;display:flex;align-items:center;gap:.75rem;flex-shrink:0}
-.logo-mark{width:28px;height:28px;background:var(--go-blue);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.9rem;color:#fff;letter-spacing:-.5px}
-header span{font-size:1rem;font-weight:600;color:var(--text)}
+.logo-img{height:24px;width:auto;display:block}
 header .version{margin-left:auto;font-size:.7rem;color:var(--muted);background:var(--border);padding:.2rem .55rem;border-radius:999px}
 main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2.5rem 2rem;text-align:center;gap:1.1rem}
 .badge{display:inline-flex;align-items:center;gap:.4rem;font-size:.75rem;color:var(--go-blue-light);background:rgba(0,172,215,.1);border:1px solid rgba(0,172,215,.2);padding:.3rem .8rem;border-radius:999px;margin-bottom:.25rem}
@@ -378,8 +377,7 @@ var templateTpl = `<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <div class="logo-mark">K</div>
-  <span>{{"{{"}} AppName {{"}}"}}</span>
+  <img src="/kyrux/statics/kyrux_wt.png" class="logo-img" alt="Kyrux">
   <span class="version">v{{"{{"}} Version {{"}}"}}</span>
 </header>
 <main>
