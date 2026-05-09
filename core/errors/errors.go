@@ -1,8 +1,8 @@
 package errors
 
 import (
-	_ "embed"
 	"bytes"
+	_ "embed"
 	"fmt"
 	"html"
 	"html/template"
@@ -87,11 +87,11 @@ type debugData struct {
 // TemplateError descreve um erro de template com localização precisa.
 // Preenchido pelo pacote render e renderizado pela debug page.
 type TemplateError struct {
-	Kind    string      // "missing_dot" | "missing_key" | "syntax"
-	File    string      // nome do arquivo de template
-	Line    int         // linha onde o erro ocorreu (1-based)
-	VarName string      // nome da variável envolvida
-	Raw     string      // mensagem original do Go template engine
+	Kind    string // "missing_dot" | "missing_key" | "syntax"
+	File    string // nome do arquivo de template
+	Line    int    // linha onde o erro ocorreu (1-based)
+	VarName string // nome da variável envolvida
+	Raw     string // mensagem original do Go template engine
 	Snippet []SnippetLine
 }
 

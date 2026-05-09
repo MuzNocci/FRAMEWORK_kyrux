@@ -10,8 +10,8 @@ import (
 	"sync"
 )
 
-var ctxPool    = sync.Pool{New: func() any { return &Context{} }}
-var cwPool     = sync.Pool{New: func() any { return &codeWriter{} }}
+var ctxPool = sync.Pool{New: func() any { return &Context{} }}
+var cwPool = sync.Pool{New: func() any { return &codeWriter{} }}
 var paramsPool = sync.Pool{New: func() any { return make(map[string]string, 4) }}
 
 type HandlerFunc func(ctx *Context)

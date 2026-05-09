@@ -60,6 +60,12 @@ func RequireAuth(a *auth.Authenticator) router.MiddlewareFunc {
 	}
 }
 
+var (
+	corsAllowMethodsHeader = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+	corsAllowHeadersHeader = "Content-Type, Authorization, X-CSRF-Token"
+	corsMaxAgeHeader       = "86400"
+)
+
 func CORS(allowedOrigins []string) router.MiddlewareFunc {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, o := range allowedOrigins {
@@ -75,9 +81,9 @@ func CORS(allowedOrigins []string) router.MiddlewareFunc {
 			}
 			if ctx.Request.Method == http.MethodOptions {
 				h := ctx.Writer.Header()
-				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
-				h.Set("Access-Control-Max-Age", "86400")
+				h.Set("Access-Control-Allow-Methods", corsAllowMethodsHeader)
+				h.Set("Access-Control-Allow-Headers", corsAllowHeadersHeader)
+				h.Set("Access-Control-Max-Age", corsMaxAgeHeader)
 				ctx.Writer.WriteHeader(http.StatusNoContent)
 				return
 			}
@@ -88,16 +94,23 @@ func CORS(allowedOrigins []string) router.MiddlewareFunc {
 
 // SecureHeaders adiciona cabeçalhos de segurança em produção.
 // Deve ser registrado com r.Use() no bootstrap quando !debug.
+// Otimização: headers pré-compilados como constantes
+var secureHeadersMap = map[string]string{
+	"Strict-Transport-Security":         "max-age=63072000; includeSubDomains; preload",
+	"X-Content-Type-Options":            "nosniff",
+	"X-Frame-Options":                   "DENY",
+	"Referrer-Policy":                   "strict-origin-when-cross-origin",
+	"Content-Security-Policy":           "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
+	"Permissions-Policy":                "camera=(), microphone=(), geolocation=(), payment=()",
+	"X-Permitted-Cross-Domain-Policies": "none",
+}
+
 func SecureHeaders(next router.HandlerFunc) router.HandlerFunc {
 	return func(ctx *router.Context) {
 		h := ctx.Writer.Header()
-		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:")
-		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
-		h.Set("X-Permitted-Cross-Domain-Policies", "none")
+		for k, v := range secureHeadersMap {
+			h.Set(k, v)
+		}
 		next(ctx)
 	}
 }

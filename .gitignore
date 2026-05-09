@@ -26,6 +26,8 @@
 *.out
 coverage.html
 coverage.out
+pprof_mem_top.txt
+gc_escapes.txt
 
 # Go workspace
 go.work

@@ -21,12 +21,20 @@ import (
 
 var templateFuncs = template.FuncMap{
 	"url": router.Resolve,
-	"statics": func(_ string, parts ...string) string {
-		path := strings.Join(parts, "")
-		if path != "" {
-			return "/statics/" + path
+	"statics": func(parts ...string) string {
+		if len(parts) == 0 {
+			return "/statics"
 		}
-		return "/statics"
+		// Use strings.Builder to avoid allocations in path joining
+		var sb strings.Builder
+		sb.WriteString("/statics")
+		for _, part := range parts {
+			if part != "" {
+				sb.WriteString("/")
+				sb.WriteString(part)
+			}
+		}
+		return sb.String()
 	},
 }
 

@@ -4,46 +4,38 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type multiStatic struct {
-	dirs []string
+	appsDir string
 }
 
 func (m *multiStatic) Open(name string) (http.File, error) {
-	for _, dir := range m.dirs {
-		f, err := http.Dir(dir).Open(name)
-		if err == nil {
-			return f, nil
-		}
-	}
-	return nil, os.ErrNotExist
-}
-
-// collectStaticDirs retorna statics/ da raiz + statics/ de cada app.
-func collectStaticDirs(appsDir string) []string {
-	dirs := []string{}
-
-	if _, err := os.Stat("statics"); err == nil {
-		dirs = append(dirs, "statics")
+	// Primeiro tenta em statics/ da raiz
+	if f, err := http.Dir("statics").Open(name); err == nil {
+		return f, nil
 	}
 
-	entries, err := os.ReadDir(appsDir)
+	// http.FileServer sempre passa paths com "/" no início — strip antes de manipular
+	clean := strings.TrimPrefix(name, "/")
+	parts := strings.SplitN(clean, "/", 2)
+	if parts[0] == "" {
+		return nil, os.ErrNotExist
+	}
+
+	appName := parts[0]
+	var subPath string
+	if len(parts) > 1 {
+		subPath = parts[1]
+	}
+
+	path := filepath.Join(m.appsDir, appName, "assets", subPath)
+	f, err := os.Open(path)
 	if err != nil {
-		return dirs
+		return nil, os.ErrNotExist
 	}
-
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		path := filepath.Join(appsDir, e.Name(), "statics")
-		if _, err := os.Stat(path); err == nil {
-			dirs = append(dirs, path)
-		}
-	}
-
-	return dirs
+	return f, nil
 }
 
 func StaticHandler(dir string) http.Handler {
@@ -51,7 +43,7 @@ func StaticHandler(dir string) http.Handler {
 }
 
 func MultiStaticHandler(appsDir string) http.Handler {
-	fs := http.FileServer(&multiStatic{dirs: collectStaticDirs(appsDir)})
+	fs := http.FileServer(&multiStatic{appsDir: appsDir})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isDebug() {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

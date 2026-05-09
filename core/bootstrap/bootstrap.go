@@ -131,7 +131,7 @@ func Init(envPath string) (*Framework, error) {
 
 	if cfg.App.Debug {
 		lr := hotreload.NewHub()
-		lr.Watch("apps", "statics")
+		lr.Watch("apps")
 		r.HandlePrefix("GET /__kyrux_reload__", lr)
 		log.Println("bootstrap: hotreload ativo")
 
