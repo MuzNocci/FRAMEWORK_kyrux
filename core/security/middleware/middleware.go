@@ -91,7 +91,7 @@ func CORS(allowedOrigins []string) router.MiddlewareFunc {
 func SecureHeaders(next router.HandlerFunc) router.HandlerFunc {
 	return func(ctx *router.Context) {
 		h := ctx.Writer.Header()
-		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")

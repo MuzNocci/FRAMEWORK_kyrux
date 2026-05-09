@@ -5,6 +5,8 @@ import (
 	"kyrux/core/events"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 )
 
@@ -33,15 +35,24 @@ func (h *Hub) sendDOM(target, html, action string) {
 	h.mu.RUnlock()
 }
 
+// Replace/Append/Prepend tratam html como HTML confiável (renderizado pelo servidor).
+// Para conteúdo do usuário, use as variantes Text abaixo.
 func (h *Hub) Replace(target, html string) { h.sendDOM(target, html, "replace") }
 func (h *Hub) Append(target, html string)  { h.sendDOM(target, html, "append") }
 func (h *Hub) Prepend(target, html string) { h.sendDOM(target, html, "prepend") }
 func (h *Hub) Remove(target string)        { h.sendDOM(target, "", "remove") }
 
+// ReplaceText/AppendText/PrependText são seguros para conteúdo do usuário:
+// o cliente usa textContent em vez de innerHTML, impedindo XSS.
+func (h *Hub) ReplaceText(target, text string) { h.sendDOM(target, text, "replace-text") }
+func (h *Hub) AppendText(target, text string)  { h.sendDOM(target, text, "append-text") }
+func (h *Hub) PrependText(target, text string) { h.sendDOM(target, text, "prepend-text") }
+
 type Hub struct {
-	mu      sync.RWMutex
-	clients map[string]*Client
-	bus     *events.Bus
+	mu             sync.RWMutex
+	clients        map[string]*Client
+	bus            *events.Bus
+	allowedOrigins []string
 }
 
 func NewHub(bus *events.Bus) *Hub {
@@ -49,6 +60,33 @@ func NewHub(bus *events.Bus) *Hub {
 		clients: make(map[string]*Client),
 		bus:     bus,
 	}
+}
+
+// SetAllowedOrigins define os hosts permitidos na validação de Origin do WebSocket.
+// Deve ser chamado no bootstrap com os mesmos hosts de ALLOWED_HOSTS.
+func (h *Hub) SetAllowedOrigins(hosts []string) {
+	h.allowedOrigins = hosts
+}
+
+func (h *Hub) originAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true // cliente não-browser (curl, testes)
+	}
+	if len(h.allowedOrigins) == 0 {
+		return true // sem lista configurada, permite tudo
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	for _, allowed := range h.allowedOrigins {
+		if strings.EqualFold(host, allowed) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Hub) Register(c *Client) {
@@ -71,6 +109,10 @@ func (h *Hub) Broadcast(event string, payload any) {
 }
 
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !h.originAllowed(r) {
+		http.Error(w, "websocket: origin não permitido", http.StatusForbidden)
+		return
+	}
 	c, err := newClient(w, r, h)
 	if err != nil {
 		http.Error(w, "websocket upgrade failed", http.StatusBadRequest)

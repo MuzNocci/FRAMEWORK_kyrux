@@ -43,6 +43,9 @@ const liveScript = `<script>
       var a=m.action||"replace";
       if(a==="append")el.insertAdjacentHTML("beforeend",m.html);
       else if(a==="prepend")el.insertAdjacentHTML("afterbegin",m.html);
+      else if(a==="append-text"){el.appendChild(document.createTextNode(m.html));}
+      else if(a==="prepend-text"){el.insertBefore(document.createTextNode(m.html),el.firstChild);}
+      else if(a==="replace-text")el.textContent=m.html;
       else if(a==="remove")el.remove();
       else el.innerHTML=m.html;
     }catch(_){}

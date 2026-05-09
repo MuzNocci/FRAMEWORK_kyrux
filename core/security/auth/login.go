@@ -106,6 +106,11 @@ func Login(db *database.DB, store *session.Store, w http.ResponseWriter, r *http
 		return nil, ErrWrongPassword
 	}
 
+	// Apagar sessão anônima existente antes de criar a autenticada (session fixation).
+	if old, ok := session.FromRequest(r, store); ok {
+		store.Delete(old.ID)
+	}
+
 	sess, err := store.New()
 	if err != nil {
 		return nil, err

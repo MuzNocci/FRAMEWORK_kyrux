@@ -77,6 +77,7 @@ func Init(envPath string) (*Framework, error) {
 
 	bus := events.NewBus()
 	hub := realtime.NewHub(bus)
+	hub.SetAllowedOrigins(cfg.Security.AllowedHost)
 	r := router.New()
 	kyerrors.SetRouteListFunc(r.Routes)
 	r.Use(secmiddleware.Recovery())
