@@ -41,7 +41,7 @@ Herança via `{% extends %}`, blocos com `{% block %}`, inclusão com `{% includ
 Funções globais: `{{ AppName }}`, `{{ Version }}`, `{{ Env }}`, `{{ Addr }}`, `{{ url "nome" }}`, `{{ csrf_token }}`, `{{ statics "app" "path/arquivo.css" }}`.
 
 ### Middleware
-Recovery (panic), AllowedHosts, CORS, SecureHeaders, RequireLogin (SSR), RequireAuth (JWT), compressão gzip.
+Recovery (panic), AllowedHosts, CORS, SecureHeaders, RequireLogin (SSR), RequireAuth (JWT), RateLimit (por IP), compressão gzip.
 
 ### Security / CSRF
 CSRF automático em POST/PUT/PATCH/DELETE via cookie + field hidden ou header `X-CSRF-Token`.
@@ -74,7 +74,9 @@ Cache em memória com TTL e GC automático.
 Pub/sub assíncrono em goroutines separadas.
 
 ### Realtime
-WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`.
+WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
+(broadcast global) e variantes `*For` com escopo de sessão para conteúdo por usuário.
+Ping/pong automático e reconexão com backoff no cliente.
 
 ### Errors
 Páginas de erro customizáveis. Debug page com stack trace em desenvolvimento.

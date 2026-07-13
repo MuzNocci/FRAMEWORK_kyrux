@@ -12,6 +12,7 @@ import (
 	"kyrux/core/render"
 	"kyrux/core/router"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -29,6 +30,22 @@ var unsafeMethods = map[string]bool{
 
 var secureCookie bool
 var atomicSecret atomic.Value
+var exemptPrefixes []string
+
+// Exempt isenta um prefixo de path da validação CSRF (ex: "/api/").
+// Use para APIs autenticadas por Bearer token (RequireAuth), que não usam
+// cookies — sem a isenção, clientes JSON puros recebem 403 em POST/PUT/DELETE.
+// Chame no bootstrap ou no Register do app, antes de servir requisições.
+func Exempt(prefix string) { exemptPrefixes = append(exemptPrefixes, prefix) }
+
+func isExempt(path string) bool {
+	for _, p := range exemptPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // SetSecure ativa a flag Secure no cookie CSRF. Deve ser chamado no bootstrap.
 func SetSecure(v bool) { secureCookie = v }
@@ -70,7 +87,7 @@ func Middleware(next router.HandlerFunc) router.HandlerFunc {
 		}
 		ctx.Set(contextKey, signed)
 
-		if unsafeMethods[ctx.Request.Method] {
+		if unsafeMethods[ctx.Request.Method] && !isExempt(ctx.Request.URL.Path) {
 			submitted := ctx.Request.FormValue(fieldName)
 			if submitted == "" {
 				submitted = ctx.Request.Header.Get(headerName)
@@ -95,8 +112,11 @@ func getOrCreate(ctx *router.Context) (raw, signed string, err error) {
 			return
 		}
 		http.SetCookie(ctx.Writer, &http.Cookie{
-			Name:     cookieName,
-			Value:    raw,
+			Name:  cookieName,
+			Value: raw,
+			// HttpOnly false é intencional (double-submit): o valor bruto pode
+			// ser lido por JS, mas o token submetido é o HMAC assinado com a
+			// SECRET_KEY — um XSS não consegue forjá-lo sem o segredo.
 			HttpOnly: false,
 			Secure:   secureCookie,
 			SameSite: http.SameSiteStrictMode,

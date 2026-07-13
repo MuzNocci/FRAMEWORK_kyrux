@@ -1,6 +1,7 @@
 package database
 
 import (
+	"container/list"
 	"context"
 	"database/sql"
 	"fmt"
@@ -12,20 +13,80 @@ import (
 
 const maxCachedStmts = 512
 
+// stmtCache é um cache LRU de prepared statements. Ao evictar, o statement
+// é fechado — sem isso, statements órfãos acumulam no servidor de banco.
+type stmtCache struct {
+	mu    sync.Mutex
+	items map[string]*list.Element
+	order *list.List // frente = usado mais recentemente
+}
+
+type stmtEntry struct {
+	key  string
+	stmt *sql.Stmt
+}
+
+func newStmtCache() *stmtCache {
+	return &stmtCache{items: make(map[string]*list.Element), order: list.New()}
+}
+
+func (c *stmtCache) get(key string) *sql.Stmt {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[key]; ok {
+		c.order.MoveToFront(el)
+		return el.Value.(*stmtEntry).stmt
+	}
+	return nil
+}
+
+// put insere o statement e retorna os que devem ser fechados pelo caller:
+// o evictado por capacidade e/ou o próprio s, se outro goroutine já tiver
+// cacheado a mesma query (nesse caso `use` é o statement existente).
+func (c *stmtCache) put(key string, s *sql.Stmt) (use *sql.Stmt, toClose []*sql.Stmt) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.items[key]; ok {
+		c.order.MoveToFront(el)
+		return el.Value.(*stmtEntry).stmt, []*sql.Stmt{s}
+	}
+	c.items[key] = c.order.PushFront(&stmtEntry{key: key, stmt: s})
+	if c.order.Len() > maxCachedStmts {
+		oldest := c.order.Back()
+		c.order.Remove(oldest)
+		e := oldest.Value.(*stmtEntry)
+		delete(c.items, e.key)
+		toClose = append(toClose, e.stmt)
+	}
+	return s, toClose
+}
+
+func (c *stmtCache) closeAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, el := range c.items {
+		if s := el.Value.(*stmtEntry).stmt; s != nil {
+			_ = s.Close()
+		}
+	}
+	c.items = make(map[string]*list.Element)
+	c.order.Init()
+}
+
 // DB encapsula *sql.DB com o nome do driver e um schema opcional.
 type DB struct {
 	*sql.DB
 	Driver string
 	Schema string
-	stmtMu sync.RWMutex
-	stmts  map[string]*sql.Stmt
+	stmts  *stmtCache
 }
 
 // WithSchema retorna uma cópia de DB com o schema definido — útil para multi-tenant.
+// O cache de statements é compartilhado: pertence à conexão, não ao schema.
 //
 //	db := fw.DB.Use().WithSchema("tenant_abc")
 func (db *DB) WithSchema(schema string) *DB {
-	return &DB{DB: db.DB, Driver: db.Driver, Schema: schema}
+	return &DB{DB: db.DB, Driver: db.Driver, Schema: schema, stmts: db.stmts}
 }
 
 func (db *DB) Transaction(fn func(tx *sql.Tx) error) error {
@@ -173,35 +234,28 @@ func open(driver, dsn string) (*DB, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("database: ping [%s]: %w", driver, err)
 	}
-	return &DB{DB: db, Driver: driver, stmts: make(map[string]*sql.Stmt)}, nil
+	return &DB{DB: db, Driver: driver, stmts: newStmtCache()}, nil
 }
 
-// PrepareCached prepara (se necessário) e retorna um *sql.Stmt armazenado em cache
-// para a query fornecida. A chave do cache é a query completa (após rewrite).
+// PrepareCached prepara (se necessário) e retorna um *sql.Stmt do cache LRU.
+// A chave do cache é a query completa (após rewrite). Ao atingir o limite,
+// o statement menos usado é evictado e fechado.
 func (db *DB) PrepareCached(query string) (*sql.Stmt, error) {
-	db.stmtMu.RLock()
-	if s, ok := db.stmts[query]; ok {
-		db.stmtMu.RUnlock()
-		return s, nil
-	}
-	db.stmtMu.RUnlock()
-
-	db.stmtMu.Lock()
-	defer db.stmtMu.Unlock()
 	if db.stmts == nil {
-		db.stmts = make(map[string]*sql.Stmt)
+		return db.DB.Prepare(query)
 	}
-	if s, ok := db.stmts[query]; ok {
+	if s := db.stmts.get(query); s != nil {
 		return s, nil
 	}
 	s, err := db.DB.Prepare(query)
 	if err != nil {
 		return nil, err
 	}
-	if len(db.stmts) < maxCachedStmts {
-		db.stmts[query] = s
+	use, toClose := db.stmts.put(query, s)
+	for _, old := range toClose {
+		_ = old.Close()
 	}
-	return s, nil
+	return use, nil
 }
 
 // Close fecha statements em cache e a conexão subjacente.
@@ -209,13 +263,8 @@ func (db *DB) Close() error {
 	if db == nil || db.DB == nil {
 		return nil
 	}
-	db.stmtMu.Lock()
-	for _, s := range db.stmts {
-		if s != nil {
-			_ = s.Close()
-		}
+	if db.stmts != nil {
+		db.stmts.closeAll()
 	}
-	db.stmts = nil
-	db.stmtMu.Unlock()
 	return db.DB.Close()
 }

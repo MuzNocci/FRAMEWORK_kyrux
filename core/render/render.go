@@ -38,28 +38,46 @@ var templateFuncs = template.FuncMap{
 	},
 }
 
-const liveScript = `<script>
-(function(){
-  var p=location.protocol==="https:"?"wss":"ws";
-  var ws=new WebSocket(p+"://"+location.host+"/kyrux/websocket/ws/");
-  ws.onmessage=function(e){
-    try{
-      var m=JSON.parse(e.data);
-      if(m.type!=="kyrux:dom")return;
-      var el=document.querySelector('[kyrux-target="'+m.target+'"]');
-      if(!el)return;
-      var a=m.action||"replace";
-      if(a==="append")el.insertAdjacentHTML("beforeend",m.html);
-      else if(a==="prepend")el.insertAdjacentHTML("afterbegin",m.html);
-      else if(a==="append-text"){el.appendChild(document.createTextNode(m.html));}
-      else if(a==="prepend-text"){el.insertBefore(document.createTextNode(m.html),el.firstChild);}
-      else if(a==="replace-text")el.textContent=m.html;
-      else if(a==="remove")el.remove();
-      else el.innerHTML=m.html;
-    }catch(_){}
-  };
+// liveScriptJS é o cliente WebSocket do Realtime. É servido como arquivo
+// externo em /kyrux/js/live.js (registrado no bootstrap) em vez de inline,
+// para ser compatível com a CSP `script-src 'self'` enviada em produção.
+const liveScriptJS = `(function(){
+  var delay=1000;
+  function connect(){
+    var p=location.protocol==="https:"?"wss":"ws";
+    var ws=new WebSocket(p+"://"+location.host+"/kyrux/websocket/ws/");
+    ws.onopen=function(){delay=1000;};
+    ws.onmessage=function(e){
+      try{
+        var m=JSON.parse(e.data);
+        if(m.type!=="kyrux:dom")return;
+        var el=document.querySelector('[kyrux-target="'+m.target+'"]');
+        if(!el)return;
+        var a=m.action||"replace";
+        if(a==="append")el.insertAdjacentHTML("beforeend",m.html);
+        else if(a==="prepend")el.insertAdjacentHTML("afterbegin",m.html);
+        else if(a==="append-text"){el.appendChild(document.createTextNode(m.html));}
+        else if(a==="prepend-text"){el.insertBefore(document.createTextNode(m.html),el.firstChild);}
+        else if(a==="replace-text")el.textContent=m.html;
+        else if(a==="remove")el.remove();
+        else el.innerHTML=m.html;
+      }catch(_){}
+    };
+    ws.onclose=function(){
+      setTimeout(connect,delay);
+      delay=Math.min(delay*2,30000);
+    };
+  }
+  connect();
 })();
-</script>`
+`
+
+// liveScriptTag é a tag injetada antes de </body> em toda página renderizada.
+const liveScriptTag = `<script src="/kyrux/js/live.js" defer></script>`
+
+// LiveScriptJS retorna o código do cliente Realtime para ser servido
+// em /kyrux/js/live.js pelo bootstrap.
+func LiveScriptJS() []byte { return []byte(liveScriptJS) }
 
 const reloadScript = `<script>
 (function(){
@@ -267,7 +285,9 @@ func (e *Engine) Render(w http.ResponseWriter, name string, data any) error {
 		return err
 	}
 
-	inject := liveScript
+	// reloadScript permanece inline: só existe em development, onde a CSP
+	// de produção (SecureHeaders) não é aplicada.
+	inject := liveScriptTag
 	if isDebug() {
 		inject += reloadScript
 	}

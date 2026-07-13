@@ -6,6 +6,7 @@ import (
 	"kyrux/core/security/crypton"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,8 +23,33 @@ var (
 type Session struct {
 	ID      string
 	UserKey string
+	// Values não é seguro para acesso concorrente direto — duas requisições
+	// paralelas da mesma sessão causam data race. Prefira Get/Set/Delete.
 	Values  map[string]any
 	Expires time.Time
+	mu      sync.RWMutex
+}
+
+// Get lê um valor da sessão com lock — seguro para requisições paralelas.
+func (s *Session) Get(key string) (any, bool) {
+	s.mu.RLock()
+	v, ok := s.Values[key]
+	s.mu.RUnlock()
+	return v, ok
+}
+
+// Set grava um valor na sessão com lock — seguro para requisições paralelas.
+func (s *Session) Set(key string, value any) {
+	s.mu.Lock()
+	s.Values[key] = value
+	s.mu.Unlock()
+}
+
+// Delete remove um valor da sessão com lock.
+func (s *Session) Delete(key string) {
+	s.mu.Lock()
+	delete(s.Values, key)
+	s.mu.Unlock()
 }
 
 type Store struct {
@@ -170,14 +196,24 @@ func (s *Store) gc() {
 
 func CookieName() string { return "kyrux_session" }
 
+// secureDefault força a flag Secure nos cookies de sessão. Definido pelo
+// bootstrap com !debug — não dependa de r.TLS: atrás de proxy reverso
+// (TLS terminado no nginx/Caddy) r.TLS é sempre nil, mesmo em produção.
+var secureDefault atomic.Bool
+
+// SetSecureDefault define se cookies de sessão levam Secure por padrão.
+// Chamado no bootstrap; em produção deve ser true.
+func SetSecureDefault(v bool) { secureDefault.Store(v) }
+
 // SetCookie define o cookie de sessão com as flags de segurança corretas.
-// secure deve ser true em produção (HTTPS). Usar em conjunto com session.New().
+// A flag Secure efetiva é secure OU o padrão do bootstrap (SetSecureDefault) —
+// assim `session.SetCookie(w, id, r.TLS != nil)` continua correto atrás de proxy.
 func SetCookie(w http.ResponseWriter, sessionID string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName(),
 		Value:    sessionID,
 		HttpOnly: true,
-		Secure:   secure,
+		Secure:   secure || secureDefault.Load(),
 		SameSite: http.SameSiteStrictMode,
 		Path:     "/",
 	})

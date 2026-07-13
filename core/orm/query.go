@@ -178,18 +178,24 @@ func (q *Query[T]) Update(values map[string]any) error {
 	for _, col := range keys {
 		setClauses = append(setClauses, col+" = ?")
 		val := values[col]
+		// Fail-closed: erro no hash/encrypt aborta o UPDATE — jamais
+		// gravar plaintext numa coluna marcada como sensível.
 		if f, ok := colMeta[col]; ok {
 			if f.IsHash {
 				if s, ok2 := val.(string); ok2 && !strings.HasPrefix(s, "$argon2id$") {
-					if hashed, err := crypton.HashPassword(s); err == nil {
-						val = hashed
+					hashed, err := crypton.HashPassword(s)
+					if err != nil {
+						return fmt.Errorf("orm: update: hash campo %s: %w", col, err)
 					}
+					val = hashed
 				}
 			} else if f.IsEncrypt {
 				if s, ok2 := val.(string); ok2 {
-					if enc, err := crypton.Encrypt(s); err == nil {
-						val = enc
+					enc, err := crypton.Encrypt(s)
+					if err != nil {
+						return fmt.Errorf("orm: update: encrypt campo %s: %w", col, err)
 					}
+					val = enc
 				}
 			}
 		}
@@ -302,6 +308,55 @@ func (q *Query[T]) Paginate(page, pageSize int) (Page[T], error) {
 	}, nil
 }
 
+// PaginateNoCount pagina sem executar COUNT(*) — indicado para tabelas
+// grandes e feeds infinitos, onde o count exato não importa e custa caro.
+// Busca pageSize+1 linhas para inferir HasNext; Total e TotalPages ficam
+// em -1 e 0 (desconhecidos). Para paginação com total exato, use Paginate.
+func (q *Query[T]) PaginateNoCount(page, pageSize int) (Page[T], error) {
+	if q.err != nil {
+		return Page[T]{}, q.err
+	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+
+	offset := (page - 1) * pageSize
+	sqlStr, args := q.buildSelectPage(pageSize+1, offset)
+	rows, err := func() (*sql.Rows, error) {
+		if stmt, perr := q.db.PrepareCached(sqlStr); perr == nil {
+			return stmt.Query(args...)
+		}
+		return q.db.Query(sqlStr, args...)
+	}()
+	if err != nil {
+		return Page[T]{}, fmt.Errorf("orm: paginate: %w", err)
+	}
+	defer rows.Close()
+
+	items, err := scanRows[T](rows, q.meta)
+	if err != nil {
+		return Page[T]{}, err
+	}
+
+	hasNext := len(items) > pageSize
+	if hasNext {
+		items = items[:pageSize]
+	}
+
+	return Page[T]{
+		Items:      items,
+		Total:      -1,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: 0,
+		HasNext:    hasNext,
+		HasPrev:    page > 1,
+	}, nil
+}
+
 // buildSelect monta o SQL SELECT respeitando os filtros, ordem e limite.
 // O parâmetro forceLimit substitui q.limit quando > 0 (usado por First).
 func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
@@ -333,17 +388,25 @@ func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 		sb.WriteString(" ORDER BY ")
 		sb.WriteString(q.orderBy)
 	}
+	// LIMIT/OFFSET como placeholders: o SQL fica idêntico entre páginas,
+	// então o cache de prepared statements é reaproveitado de verdade.
 	lim := q.limit
 	if forceLimit > 0 {
 		lim = forceLimit
 	}
+	args := q.args
+	if lim > 0 || q.offset > 0 {
+		args = append(make([]any, 0, len(q.args)+2), q.args...)
+	}
 	if lim > 0 {
-		fmt.Fprintf(&sb, " LIMIT %d", lim)
+		sb.WriteString(" LIMIT ?")
+		args = append(args, lim)
 	}
 	if q.offset > 0 {
-		fmt.Fprintf(&sb, " OFFSET %d", q.offset)
+		sb.WriteString(" OFFSET ?")
+		args = append(args, q.offset)
 	}
-	return rewritePlaceholders(q.db.Driver, sb.String()), q.args
+	return rewritePlaceholders(q.db.Driver, sb.String()), args
 }
 
 // buildSelectPage monta o SELECT com LIMIT/OFFSET fixos, ignorando q.limit e q.offset.
@@ -376,6 +439,8 @@ func (q *Query[T]) buildSelectPage(pageSize, offset int) (string, []any) {
 		sb.WriteString(" ORDER BY ")
 		sb.WriteString(q.orderBy)
 	}
-	fmt.Fprintf(&sb, " LIMIT %d OFFSET %d", pageSize, offset)
-	return rewritePlaceholders(q.db.Driver, sb.String()), q.args
+	sb.WriteString(" LIMIT ? OFFSET ?")
+	args := append(make([]any, 0, len(q.args)+2), q.args...)
+	args = append(args, pageSize, offset)
+	return rewritePlaceholders(q.db.Driver, sb.String()), args
 }

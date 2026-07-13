@@ -317,6 +317,15 @@ func PostView(ctx *router.Context) {
 }
 ```
 
+> ⚠️ **Nunca use `ctx` em goroutines que vivem além do handler** — o Context
+> volta a um pool quando o handler retorna e é reutilizado por outra requisição.
+> Para trabalho assíncrono, faça uma cópia:
+>
+> ```go
+> cp := ctx.Copy() // Params, dados e Request para leitura; Writer é nil
+> go func() { processar(cp.Param("id")) }()
+> ```
+
 ### Métodos do Context
 
 #### Parâmetros de path
@@ -576,22 +585,32 @@ O `{{ csrf_token }}` injeta automaticamente:
 
 ### Em requisições AJAX
 
+O token enviado deve ser o valor **assinado** — o mesmo que `{{ csrf_token }}`
+injeta no hidden input (o cookie `kyrux_csrf` guarda o valor bruto, que **não**
+é aceito). Leia do input renderizado na página:
+
 ```javascript
-// Leia o token do cookie
-function getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) return parts.pop().split(';').shift();
-}
+const token = document.querySelector('input[name="kyrux_csrf_token"]').value;
 
 fetch('/api/posts/', {
     method: 'POST',
     headers: {
         'Content-Type': 'application/json',
-        'X-CSRF-Token': getCookie('kyrux_csrf'),
+        'X-CSRF-Token': token,
     },
     body: JSON.stringify({ titulo: 'Meu Post' }),
 });
+```
+
+### Isentar rotas de API (Bearer token)
+
+APIs autenticadas por JWT (`RequireAuth`) não usam cookies — isente o prefixo
+da validação CSRF no `Register` do app:
+
+```go
+import "kyrux/core/security/csrf"
+
+csrf.Exempt("/api/")
 ```
 
 ---
@@ -617,6 +636,7 @@ Registrados no `bootstrap` — já ativos por padrão:
 | `SecureHeaders` | `r.Use(secmiddleware.SecureHeaders)` | HSTS, X-Frame-Options, CSP (produção) |
 | `RequireAuth(a)` | por rota ou global | Exige Bearer token JWT — APIs stateless |
 | `RequireLogin(store, url)` | por rota ou global | Exige sessão ativa — views SSR; redireciona para `url` se não autenticado |
+| `RateLimit(max, janela)` | por rota (recomendado no login) | Máximo de `max` requisições por IP por janela; excedentes recebem 429 |
 
 ```go
 import (
@@ -635,6 +655,10 @@ r.Use(secmiddleware.RequireLogin(fw.Sessions, "/login/"))
 
 // Exigir JWT em rotas de API
 r.Use(secmiddleware.RequireAuth(fw.Auth))
+
+// Rate limit por rota — essencial no login (Argon2 é caro por design):
+router.Path("POST", "/login/",
+    secmiddleware.RateLimit(10, time.Minute)(views.LoginPost(fw)), "login_post"),
 ```
 
 ### Middleware personalizado
@@ -1080,6 +1104,14 @@ render.For("blog").Render(ctx, "lista.html", map[string]any{
 })
 ```
 
+Para tabelas grandes e feeds infinitos, `PaginateNoCount` evita o `COUNT(*)`
+(caro no PostgreSQL): busca `pageSize+1` linhas e infere `HasNext`.
+`Total` fica em `-1` e `TotalPages` em `0` (desconhecidos):
+
+```go
+p, err := orm.From[Post](db).OrderBy("id DESC").PaginateNoCount(page, 20)
+```
+
 No template:
 
 ```html
@@ -1215,22 +1247,31 @@ func ListaView(ctx *router.Context) {
 
 ## 14. Sessões
 
-Sessões em memória server-side com TTL configurável via `SESSION_TTL`. O cookie `kyrux_session` é `HttpOnly`, `SameSite=Strict` e `Secure` em produção (HTTPS).
+Sessões em memória server-side com TTL configurável via `SESSION_TTL`. O cookie `kyrux_session` é `HttpOnly`, `SameSite=Strict` e `Secure` em produção — a flag Secure é aplicada automaticamente pelo bootstrap quando `APP_ENV=production`, inclusive atrás de proxy reverso (nginx/Caddy).
+
+> ⚠️ **Estado em memória**: sessões (e revogações de JWT) vivem no processo.
+> Reiniciar/redeployar desloga todos os usuários, e múltiplas réplicas atrás de
+> load balancer não compartilham sessões — nesse cenário, use *sticky sessions*
+> no balanceador até existir backend externo (ex: Redis).
 
 ### API de sessão direta
 
-Use quando precisar de controle total sobre o que é guardado na sessão:
+Use quando precisar de controle total sobre o que é guardado na sessão.
+Use `Get`/`Set`/`Delete` — são seguros para requisições paralelas da mesma sessão:
 
 ```go
 import "kyrux/core/security/session"
 
 // Criar sessão manualmente
 sess, err := fw.Sessions.New()
-sess.Values["chave"] = valor
+sess.Set("chave", valor)
 session.SetCookie(ctx.Writer, sess.ID, ctx.Request.TLS != nil)
 
 // Ler sessão do request
 sess, ok := session.FromRequest(ctx.Request, fw.Sessions)
+
+// Ler valor
+val, ok := sess.Get("chave")
 
 // Remover sessão
 fw.Sessions.Delete(sess.ID)
@@ -1506,6 +1547,24 @@ func CriarPostView(ctx *router.Context) {
 }
 ```
 
+> ⚠️ **`Replace`/`Append`/`Prepend`/`Remove` são broadcast global** — todos os
+> clientes conectados recebem a atualização. Nunca as use com dados privados.
+
+### Atualizar apenas um usuário (variantes `For`)
+
+Para conteúdo por usuário (saldo, notificações, carrinho), use as variantes
+com escopo de sessão — apenas as conexões (abas) daquela sessão recebem:
+
+```go
+sess, _ := ctx.Get("session") // colocado por RequireLogin
+s := sess.(*session.Session)
+
+fw.Realtime.ReplaceFor(s.ID, "saldo", html)       // só as abas deste usuário
+fw.Realtime.AppendFor(s.ID, "notificacoes", html)
+fw.Realtime.RemoveFor(s.ID, "alerta")
+fw.Realtime.ReplaceTextFor(s.ID, "contador", "3") // textContent — seguro p/ conteúdo do usuário
+```
+
 ### 3. Broadcast via EventBus
 
 ```go
@@ -1707,6 +1766,18 @@ Zero falhas em 200.000 requisições totais.
 
 > Medido em localhost com `SERVER_WORKERS=4`, respeitando a configuração do `.env`.
 > Resultados variam conforme hardware e carga de trabalho da view.
+
+### Deploy e HTTP/2
+
+O Kyrux serve HTTP/1.1 (sem TLS próprio). O deploy recomendado é atrás de um
+proxy reverso (nginx, Caddy, Traefik) que termina TLS e fala HTTP/2/3 com o
+browser — o proxy conversa com o Kyrux em HTTP/1.1 com keep-alive, o que não
+limita o throughput. Configure o proxy para repassar o IP real do cliente
+(`X-Forwarded-For`) se usar `RateLimit`.
+
+Sobre `SERVER_WORKERS`: **omita em produção** — o runtime Go usa todos os CPUs
+por padrão, que é o mais rápido. Defina apenas para limitar consumo de CPU
+(ex: máquina compartilhada); valores abaixo do número de CPUs reduzem o throughput.
 
 ### Rodando os testes de performance
 
@@ -1977,15 +2048,15 @@ import "kyrux/core/security/session"
 
 // Criar sessão manualmente
 sess, err := fw.Sessions.New()
-sess.Values["chave"] = valor
+sess.Set("chave", valor)
 session.SetCookie(ctx.Writer, sess.ID, ctx.Request.TLS != nil)
 
 // Ler sessão do request
 sess, ok := session.FromRequest(ctx.Request, fw.Sessions)
 if !ok { /* sem sessão */ }
 
-// Acessar valores
-val := sess.Values["chave"]
+// Acessar valores (seguro para requisições paralelas)
+val, ok := sess.Get("chave")
 
 // Encerrar sessão
 fw.Sessions.Delete(sess.ID)

@@ -58,6 +58,7 @@ func Init(envPath string) (*Framework, error) {
 	kyerrors.SetApp(cfg.App.Name, cfg.App.Version)
 	csrf.SetSecure(!cfg.App.Debug)
 	csrf.SetSecret(cfg.Security.SecretKey)
+	session.SetSecureDefault(!cfg.App.Debug)
 
 	if !cfg.App.Debug {
 		if cfg.Security.SecretKey == "change-me" {
@@ -90,7 +91,7 @@ func Init(envPath string) (*Framework, error) {
 	a := auth.New(cfg.Security.SecretKey)
 	store := session.NewStore(time.Duration(cfg.Security.SessionTTL) * time.Second)
 
-	dbm := orm.LoadDatabases()
+	dbm := orm.LoadDatabases(cfg.Databases)
 	auth.SetDBEnabled(orm.HasConnections())
 
 	f := &Framework{
@@ -126,6 +127,19 @@ func Init(envPath string) (*Framework, error) {
 		hub.ServeHTTP(ctx.Writer, ctx.Request)
 	})
 
+	// Cliente Realtime como arquivo externo — inline violaria a CSP
+	// `script-src 'self'` enviada por SecureHeaders em produção.
+	r.Internal("GET /kyrux/js/live.js", func(ctx *router.Context) {
+		h := ctx.Writer.Header()
+		h.Set("Content-Type", "application/javascript; charset=utf-8")
+		if cfg.App.Debug {
+			h.Set("Cache-Control", "no-store")
+		} else {
+			h.Set("Cache-Control", "public, max-age=86400")
+		}
+		ctx.Writer.Write(render.LiveScriptJS())
+	})
+
 	static := render.MultiStaticHandler("apps")
 	r.HandlePrefix("GET /statics/", http.StripPrefix("/statics/", static))
 
@@ -143,7 +157,12 @@ func Init(envPath string) (*Framework, error) {
 }
 
 func (f *Framework) Run() error {
-	runtime.GOMAXPROCS(f.Settings.Server.Workers)
+	// GOMAXPROCS só é alterado quando SERVER_WORKERS foi definido
+	// explicitamente — o default do runtime Go (todos os CPUs) é o mais
+	// rápido; limitar abaixo de NumCPU REDUZ o throughput.
+	if environment.Get("SERVER_WORKERS") != "" {
+		runtime.GOMAXPROCS(f.Settings.Server.Workers)
+	}
 
 	if gc := environment.Get("RUNTIME_GOGC"); gc != "" {
 		if n, err := strconv.Atoi(gc); err == nil {

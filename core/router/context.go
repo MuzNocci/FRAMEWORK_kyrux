@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	kyerrors "kyrux/core/errors"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -31,6 +32,26 @@ type Context struct {
 	Params  map[string]string
 	data    map[string]any
 	query   url.Values // cache lazy do query string parseado
+}
+
+// Copy devolve uma cópia do Context segura para uso em goroutines que vivem
+// além do handler — o Context original volta ao pool quando o handler retorna
+// e é REUTILIZADO por outra requisição (use-after-free lógico).
+//
+//	cp := ctx.Copy()
+//	go func() { processar(cp.Param("id")) }()
+//
+// A cópia carrega Params, dados (Set/Get) e o Request para leitura;
+// Writer é nil — não é possível responder à requisição a partir da cópia.
+func (c *Context) Copy() *Context {
+	cp := &Context{Request: c.Request, query: c.query}
+	if c.Params != nil {
+		cp.Params = maps.Clone(c.Params)
+	}
+	if c.data != nil {
+		cp.data = maps.Clone(c.data)
+	}
+	return cp
 }
 
 func (c *Context) SetParam(key, value string) {

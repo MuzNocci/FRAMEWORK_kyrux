@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -38,6 +39,18 @@ const (
 	argonKeyLen      = 32
 )
 
+// argonSem limita derivações Argon2id concorrentes. Cada derivação aloca
+// 64 MB — sem teto, um flood de logins esgota a memória do processo (DoS).
+// Com o semáforo, o pico fica em ~64 MB × min(NumCPU, 4); requisições
+// excedentes aguardam na fila em vez de derrubar o servidor.
+var argonSem = make(chan struct{}, min(runtime.NumCPU(), 4))
+
+func argonKey(password string, salt []byte, iter, mem uint32, par uint8, keyLen uint32) []byte {
+	argonSem <- struct{}{}
+	defer func() { <-argonSem }()
+	return argon2.IDKey([]byte(password+pepper), salt, iter, mem, par, keyLen)
+}
+
 // HashPassword gera um hash Argon2id no formato PHC:
 // $argon2id$v=19$m=65536,t=3,p=4$<salt-base64>$<hash-base64>
 // O pepper (definido via SetPepper) é aplicado antes da derivação da chave.
@@ -46,7 +59,7 @@ func HashPassword(password string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	hash := argon2.IDKey([]byte(password+pepper), salt, argonIterations, argonMemory, argonParallelism, argonKeyLen)
+	hash := argonKey(password, salt, argonIterations, argonMemory, argonParallelism, argonKeyLen)
 	encoded := fmt.Sprintf(
 		"$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version,
@@ -81,7 +94,7 @@ func CheckPassword(password, encoded string) bool {
 		return false
 	}
 
-	candidate := argon2.IDKey([]byte(password+pepper), salt, iter, mem, par, uint32(len(storedHash)))
+	candidate := argonKey(password, salt, iter, mem, par, uint32(len(storedHash)))
 	return subtle.ConstantTimeCompare(candidate, storedHash) == 1
 }
 

@@ -51,6 +51,9 @@ func Load(path string) error {
 
 		// Respeita vars já definidas no ambiente (ex: CI, testes, Docker).
 		// Para chaves repetidas, a primeira ocorrência prevalece no mapa flat.
+		// Os valores do .env ficam apenas no mapa interno (environment.Get) —
+		// não são exportados via os.Setenv, para que segredos não vazem ao
+		// ambiente de processos filhos (Air, comandos exec).
 		if _, already := loaded[key]; already {
 			continue
 		}
@@ -58,7 +61,6 @@ func Load(path string) error {
 			loaded[key] = existing
 		} else {
 			loaded[key] = value
-			os.Setenv(key, value)
 		}
 	}
 	return nil

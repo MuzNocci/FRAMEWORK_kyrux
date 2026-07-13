@@ -9,8 +9,8 @@ package database
 //
 // Em seguida, registre a conexão no bootstrap ou na inicialização do seu app:
 //
-//	fw.DB.Add("default", "postgres", os.Getenv("DB_DSN"))
-//	fw.DB.Add("analytics", "postgres", os.Getenv("ANALYTICS_DSN"))
+//	fw.DB.Add("default", "postgres", environment.Get("DB_DSN"))
+//	fw.DB.Add("analytics", "postgres", environment.Get("ANALYTICS_DSN"))
 //
 // Use a conexão:
 //

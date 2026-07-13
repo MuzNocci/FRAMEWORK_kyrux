@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+
+	"github.com/coder/websocket"
 )
 
 type domUpdate struct {
@@ -17,7 +19,9 @@ type domUpdate struct {
 	Action string `json:"action"`
 }
 
-func (h *Hub) sendDOM(target, html, action string) {
+// sendDOM envia a atualização aos clientes. key == "" → broadcast global;
+// key preenchida → apenas conexões cuja sessão corresponde.
+func (h *Hub) sendDOM(key, target, html, action string) {
 	data, err := json.Marshal(domUpdate{
 		Type: "kyrux:dom", Target: target, HTML: html, Action: action,
 	})
@@ -27,6 +31,9 @@ func (h *Hub) sendDOM(target, html, action string) {
 	}
 	h.mu.RLock()
 	for _, c := range h.clients {
+		if key != "" && c.key != key {
+			continue
+		}
 		select {
 		case c.send <- data:
 		default:
@@ -35,18 +42,45 @@ func (h *Hub) sendDOM(target, html, action string) {
 	h.mu.RUnlock()
 }
 
-// Replace/Append/Prepend tratam html como HTML confiável (renderizado pelo servidor).
-// Para conteúdo do usuário, use as variantes Text abaixo.
-func (h *Hub) Replace(target, html string) { h.sendDOM(target, html, "replace") }
-func (h *Hub) Append(target, html string)  { h.sendDOM(target, html, "append") }
-func (h *Hub) Prepend(target, html string) { h.sendDOM(target, html, "prepend") }
-func (h *Hub) Remove(target string)        { h.sendDOM(target, "", "remove") }
+// Replace/Append/Prepend/Remove são BROADCAST GLOBAL: todos os clientes
+// conectados recebem a atualização. Nunca use com dados privados de um
+// usuário — para isso existem as variantes *For abaixo.
+// O html é tratado como HTML confiável (renderizado pelo servidor);
+// para conteúdo vindo do usuário, use as variantes Text.
+func (h *Hub) Replace(target, html string) { h.sendDOM("", target, html, "replace") }
+func (h *Hub) Append(target, html string)  { h.sendDOM("", target, html, "append") }
+func (h *Hub) Prepend(target, html string) { h.sendDOM("", target, html, "prepend") }
+func (h *Hub) Remove(target string)        { h.sendDOM("", target, "", "remove") }
 
-// ReplaceText/AppendText/PrependText são seguros para conteúdo do usuário:
-// o cliente usa textContent em vez de innerHTML, impedindo XSS.
-func (h *Hub) ReplaceText(target, text string) { h.sendDOM(target, text, "replace-text") }
-func (h *Hub) AppendText(target, text string)  { h.sendDOM(target, text, "append-text") }
-func (h *Hub) PrependText(target, text string) { h.sendDOM(target, text, "prepend-text") }
+// ReplaceText/AppendText/PrependText são broadcast global, mas seguros para
+// conteúdo do usuário: o cliente usa textContent em vez de innerHTML (sem XSS).
+func (h *Hub) ReplaceText(target, text string) { h.sendDOM("", target, text, "replace-text") }
+func (h *Hub) AppendText(target, text string)  { h.sendDOM("", target, text, "append-text") }
+func (h *Hub) PrependText(target, text string) { h.sendDOM("", target, text, "prepend-text") }
+
+// As variantes *For enviam apenas às conexões da sessão indicada — use-as
+// para conteúdo por usuário (saldo, notificações, carrinho):
+//
+//	sess, _ := ctx.Get("session")           // colocado por RequireLogin
+//	fw.Realtime.ReplaceFor(sess.(*session.Session).ID, "saldo", html)
+//
+// sessionID vazio é no-op: jamais degrada para broadcast por acidente.
+func (h *Hub) sendDOMFor(sessionID, target, html, action string) {
+	if sessionID == "" {
+		return
+	}
+	h.sendDOM(sessionID, target, html, action)
+}
+
+func (h *Hub) ReplaceFor(sessionID, target, html string) { h.sendDOMFor(sessionID, target, html, "replace") }
+func (h *Hub) AppendFor(sessionID, target, html string)  { h.sendDOMFor(sessionID, target, html, "append") }
+func (h *Hub) PrependFor(sessionID, target, html string) { h.sendDOMFor(sessionID, target, html, "prepend") }
+func (h *Hub) RemoveFor(sessionID, target string)        { h.sendDOMFor(sessionID, target, "", "remove") }
+
+// Variantes *TextFor: por sessão e seguras para conteúdo do usuário (textContent).
+func (h *Hub) ReplaceTextFor(sessionID, target, text string) { h.sendDOMFor(sessionID, target, text, "replace-text") }
+func (h *Hub) AppendTextFor(sessionID, target, text string)  { h.sendDOMFor(sessionID, target, text, "append-text") }
+func (h *Hub) PrependTextFor(sessionID, target, text string) { h.sendDOMFor(sessionID, target, text, "prepend-text") }
 
 type Hub struct {
 	mu             sync.RWMutex
@@ -113,10 +147,20 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "websocket: origin não permitido", http.StatusForbidden)
 		return
 	}
-	c, err := newClient(w, r, h)
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		// A validação de Origin já foi feita por originAllowed acima,
+		// contra a mesma lista de ALLOWED_HOSTS do resto do framework.
+		InsecureSkipVerify: true,
+	})
 	if err != nil {
-		http.Error(w, "websocket upgrade failed", http.StatusBadRequest)
-		return
+		return // Accept já respondeu o erro ao cliente
+	}
+	c := &Client{
+		id:   clientID(),
+		key:  sessionKey(r),
+		conn: conn,
+		hub:  h,
+		send: make(chan []byte, 256),
 	}
 	h.Register(c)
 	go c.writePump()

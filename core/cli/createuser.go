@@ -212,13 +212,13 @@ func cuPromptPassword() (string, error) {
 		}
 
 		if string(p1) != string(p2) {
-			fmt.Println("  As senhas não conferem. Tente novamente.\n")
+			fmt.Printf("  As senhas não conferem. Tente novamente.\n\n")
 			continue
 		}
 
 		password := strings.TrimSpace(string(p1))
 		if len(password) < 8 {
-			fmt.Println("  A senha deve ter ao menos 8 caracteres.\n")
+			fmt.Printf("  A senha deve ter ao menos 8 caracteres.\n\n")
 			continue
 		}
 

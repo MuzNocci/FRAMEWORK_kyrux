@@ -5,10 +5,14 @@ import (
 	"kyrux/core/router"
 	"kyrux/core/security/auth"
 	"kyrux/core/security/session"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 func AllowedHosts(hosts []string, debug bool) router.MiddlewareFunc {
@@ -27,12 +31,15 @@ func AllowedHosts(hosts []string, debug bool) router.MiddlewareFunc {
 				next(ctx)
 				return
 			}
-			host := strings.ToLower(ctx.Request.Host)
-			if i := strings.LastIndex(host, ":"); i != -1 {
-				host = host[:i]
+			// net.SplitHostPort trata IPv6 ([::1]:8000) corretamente;
+			// sem porta, remove só os colchetes do literal IPv6.
+			host := ctx.Request.Host
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
 			}
+			host = strings.ToLower(strings.Trim(host, "[]"))
 			if _, ok := allowed[host]; !ok {
-				http.Error(ctx.Writer, "400 Bad Request — host não permitido", http.StatusBadRequest)
+				kyerrors.Render(ctx.Writer, ctx.Request, http.StatusBadRequest)
 				return
 			}
 			next(ctx)
@@ -94,22 +101,22 @@ func CORS(allowedOrigins []string) router.MiddlewareFunc {
 
 // SecureHeaders adiciona cabeçalhos de segurança em produção.
 // Deve ser registrado com r.Use() no bootstrap quando !debug.
-// Otimização: headers pré-compilados como constantes
-var secureHeadersMap = map[string]string{
-	"Strict-Transport-Security":         "max-age=63072000; includeSubDomains; preload",
-	"X-Content-Type-Options":            "nosniff",
-	"X-Frame-Options":                   "DENY",
-	"Referrer-Policy":                   "strict-origin-when-cross-origin",
-	"Content-Security-Policy":           "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
-	"Permissions-Policy":                "camera=(), microphone=(), geolocation=(), payment=()",
-	"X-Permitted-Cross-Domain-Policies": "none",
+// Slice em vez de map: sem hash walk no hot path (roda em toda request).
+var secureHeadersList = [...][2]string{
+	{"Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload"},
+	{"X-Content-Type-Options", "nosniff"},
+	{"X-Frame-Options", "DENY"},
+	{"Referrer-Policy", "strict-origin-when-cross-origin"},
+	{"Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"},
+	{"Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()"},
+	{"X-Permitted-Cross-Domain-Policies", "none"},
 }
 
 func SecureHeaders(next router.HandlerFunc) router.HandlerFunc {
 	return func(ctx *router.Context) {
 		h := ctx.Writer.Header()
-		for k, v := range secureHeadersMap {
-			h.Set(k, v)
+		for _, kv := range secureHeadersList {
+			h.Set(kv[0], kv[1])
 		}
 		next(ctx)
 	}
@@ -140,12 +147,71 @@ func LocalhostOnlyHandler(next http.Handler) http.Handler {
 }
 
 func isLocalhost(remoteAddr string) bool {
-	ip := remoteAddr
-	if i := strings.LastIndex(ip, ":"); i != -1 {
-		ip = ip[:i]
-	}
-	ip = strings.Trim(ip, "[]")
+	ip := clientIP(remoteAddr)
 	return ip == "127.0.0.1" || ip == "::1"
+}
+
+// rlEntry é a janela de contagem de um IP no RateLimit.
+type rlEntry struct {
+	count int
+	reset time.Time
+}
+
+// RateLimit limita requisições por IP: no máximo max requisições por janela.
+// Excedentes recebem 429 com Retry-After. Use nas rotas de autenticação para
+// conter brute force — o custo do Argon2id torna o login um alvo de DoS:
+//
+//	router.Path("POST", "/login/", secmiddleware.RateLimit(10, time.Minute)(views.LoginPost(fw)), "login_post"),
+//
+// O estado é por processo (memória). Atrás de proxy reverso, configure o
+// proxy para preservar o IP real ou aplique o limite no próprio proxy.
+func RateLimit(max int, window time.Duration) router.MiddlewareFunc {
+	var (
+		mu        sync.Mutex
+		entries   = make(map[string]*rlEntry)
+		lastSweep = time.Now()
+	)
+	return func(next router.HandlerFunc) router.HandlerFunc {
+		return func(ctx *router.Context) {
+			ip := clientIP(ctx.Request.RemoteAddr)
+			now := time.Now()
+
+			mu.Lock()
+			// Sweep periódico: remove janelas expiradas para o mapa não crescer sem teto.
+			if now.Sub(lastSweep) > window {
+				for k, e := range entries {
+					if now.After(e.reset) {
+						delete(entries, k)
+					}
+				}
+				lastSweep = now
+			}
+			e, ok := entries[ip]
+			if !ok || now.After(e.reset) {
+				e = &rlEntry{reset: now.Add(window)}
+				entries[ip] = e
+			}
+			e.count++
+			blocked := e.count > max
+			retryAfter := int(time.Until(e.reset).Seconds()) + 1
+			mu.Unlock()
+
+			if blocked {
+				ctx.Writer.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+				kyerrors.Render(ctx.Writer, ctx.Request, http.StatusTooManyRequests)
+				return
+			}
+			next(ctx)
+		}
+	}
+}
+
+// clientIP extrai o IP (sem porta) de um RemoteAddr, com suporte a IPv6.
+func clientIP(remoteAddr string) string {
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+	return strings.Trim(remoteAddr, "[]")
 }
 
 // MaxBodySize limita o tamanho do corpo da requisição.

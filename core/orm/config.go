@@ -1,60 +1,52 @@
 package orm
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 
 	"kyrux/core/database"
+	"kyrux/core/settings"
 )
 
-// DBConfig descreve uma entrada de DATABASES.
-type DBConfig struct {
-	Enabled  bool   `json:"enabled"`
-	Driver   string `json:"driver"`
-	Servidor string `json:"servidor"`
-}
-
-// LoadDatabases lê DATABASES, abre as conexões, registra no registry global
-// e retorna um *database.Manager com as mesmas conexões (para fw.DB no bootstrap).
+// LoadDatabases abre as conexões definidas nos blocos DB_NAME do .env
+// (parseados por settings.Load), registra cada uma no registry global e
+// retorna um *database.Manager com as mesmas conexões (para fw.DB no bootstrap).
 //
-// Faz panic em qualquer erro — a aplicação não deve subir com configuração inválida.
-// Para apps sem banco de dados, use DATABASES={}.
-func LoadDatabases() *database.Manager {
-	raw := os.Getenv("DATABASES")
-	if raw == "" {
-		panic("orm: variável de ambiente DATABASES não definida")
-	}
-
-	var configs map[string]DBConfig
-	if err := json.Unmarshal([]byte(raw), &configs); err != nil {
-		panic(fmt.Sprintf("orm: DATABASES inválido: %v", err))
-	}
-
+// O primeiro banco habilitado também responde pelo nome "default" em
+// orm.From/orm.DB, espelhando o comportamento de Manager.Use().
+//
+// Faz panic em configuração inválida — a aplicação não deve subir com um
+// banco habilitado mas mal configurado. Sem blocos DB_NAME (ou com todos
+// desabilitados), retorna um Manager vazio e o framework roda sem banco.
+func LoadDatabases(configs []settings.DatabaseSettings) *database.Manager {
 	mgr := database.NewManager()
+	opened := 0
 
-	for name, cfg := range configs {
+	for _, cfg := range configs {
 		if !cfg.Enabled {
-			log.Printf("orm: database '%s' desabilitada\n", name)
+			log.Printf("orm: database '%s' desabilitada\n", cfg.Name)
 			continue
 		}
-		if cfg.Driver == "" {
-			panic(fmt.Sprintf("orm: database '%s': campo driver não definido", name))
+		if cfg.Name == "" {
+			panic("orm: bloco de banco com DB_NAME vazio no .env")
 		}
-		if cfg.Servidor == "" {
-			panic(fmt.Sprintf("orm: database '%s': campo servidor não definido", name))
+		if cfg.DSN == "" {
+			panic(fmt.Sprintf("orm: database '%s': DB_DSN não definido no .env", cfg.Name))
 		}
 
-		db, err := database.Open(cfg.Driver, cfg.Servidor)
+		db, err := database.Open(cfg.Driver, cfg.DSN)
 		if err != nil {
-			panic(fmt.Sprintf("orm: database '%s': %v", name, err))
+			panic(fmt.Sprintf("orm: database '%s': %v", cfg.Name, err))
 		}
 
-		Register(name, db)
-		mgr.AddDB(name, db)
-		log.Printf("orm: database '%s' conectada (%s)\n", name, cfg.Driver)
+		Register(cfg.Name, db)
+		mgr.AddDB(cfg.Name, db)
+		opened++
+		log.Printf("orm: database '%s' conectada (%s)\n", cfg.Name, cfg.Driver)
 	}
 
+	if opened == 0 {
+		log.Println("orm: nenhum banco habilitado — rodando sem banco de dados")
+	}
 	return mgr
 }

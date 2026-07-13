@@ -11,10 +11,23 @@ type multiStatic struct {
 	appsDir string
 }
 
+// noDirListing rejeita diretórios: sem isso o http.FileServer devolve a
+// listagem de arquivos (enumeração de todos os assets do projeto).
+func noDirListing(f http.File) (http.File, error) {
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		f.Close()
+		return nil, os.ErrNotExist
+	}
+	return f, nil
+}
+
 func (m *multiStatic) Open(name string) (http.File, error) {
 	// Primeiro tenta em statics/ da raiz
 	if f, err := http.Dir("statics").Open(name); err == nil {
-		return f, nil
+		if f, err = noDirListing(f); err == nil {
+			return f, nil
+		}
 	}
 
 	// http.FileServer sempre passa paths com "/" no início — strip antes de manipular
@@ -35,7 +48,7 @@ func (m *multiStatic) Open(name string) (http.File, error) {
 	if err != nil {
 		return nil, os.ErrNotExist
 	}
-	return f, nil
+	return noDirListing(f)
 }
 
 func StaticHandler(dir string) http.Handler {

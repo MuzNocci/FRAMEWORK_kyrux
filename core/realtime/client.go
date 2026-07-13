@@ -1,16 +1,24 @@
 package realtime
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"net/http"
 	"time"
 
-	"golang.org/x/net/websocket"
+	"kyrux/core/security/session"
+
+	"github.com/coder/websocket"
 )
 
-const wsReadTimeout = 60 * time.Second
+const (
+	wsWriteTimeout = 10 * time.Second
+	// wsPingInterval mantém a conexão viva e detecta clientes mortos:
+	// o Ping aguarda o Pong — sem resposta, a conexão é encerrada.
+	wsPingInterval = 30 * time.Second
+)
 
 func clientID() string {
 	b := make([]byte, 16)
@@ -22,53 +30,69 @@ func clientID() string {
 
 type Client struct {
 	id   string
+	key  string // ID da sessão (valor do cookie) — vazio para visitantes sem sessão
 	conn *websocket.Conn
 	hub  *Hub
 	send chan []byte
 }
 
-func newClient(w http.ResponseWriter, r *http.Request, hub *Hub) (*Client, error) {
-	var c *Client
-	var err error
-
-	handler := websocket.Handler(func(conn *websocket.Conn) {
-		c = &Client{
-			id:   clientID(),
-			conn: conn,
-			hub:  hub,
-			send: make(chan []byte, 256),
-		}
-	})
-
-	server := &websocket.Server{Handler: handler}
-	server.ServeHTTP(w, r)
-
-	if c == nil {
-		err = fmt.Errorf("websocket upgrade failed")
+// sessionKey extrai o valor do cookie de sessão sem validá-lo no Store —
+// serve apenas como chave de roteamento para os envios *For do Hub.
+func sessionKey(r *http.Request) string {
+	if c, err := r.Cookie(session.CookieName()); err == nil {
+		return c.Value
 	}
-	return c, err
+	return ""
 }
 
+// readPump consome frames do cliente até a conexão cair.
+// Pongs e frames de controle são tratados internamente pela lib durante o Read.
 func (c *Client) readPump() {
 	defer c.hub.Unregister(c.id)
-	var msg []byte
+	ctx := context.Background()
 	for {
-		c.conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
-		if err := websocket.Message.Receive(c.conn, &msg); err != nil {
-			break
+		if _, _, err := c.conn.Read(ctx); err != nil {
+			return
 		}
 	}
 }
 
+// writePump serializa as escritas na conexão e envia pings periódicos.
 func (c *Client) writePump() {
-	for msg := range c.send {
-		if err := websocket.Message.Send(c.conn, string(msg)); err != nil {
-			break
+	ticker := time.NewTicker(wsPingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case msg, ok := <-c.send:
+			if !ok {
+				return
+			}
+			if err := c.write(msg); err != nil {
+				c.hub.Unregister(c.id)
+				return
+			}
+		case <-ticker.C:
+			if err := c.ping(); err != nil {
+				c.hub.Unregister(c.id)
+				return
+			}
 		}
 	}
+}
+
+func (c *Client) write(msg []byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), wsWriteTimeout)
+	defer cancel()
+	return c.conn.Write(ctx, websocket.MessageText, msg)
+}
+
+func (c *Client) ping() error {
+	ctx, cancel := context.WithTimeout(context.Background(), wsWriteTimeout)
+	defer cancel()
+	return c.conn.Ping(ctx)
 }
 
 func (c *Client) close() {
 	close(c.send)
-	c.conn.Close()
+	c.conn.Close(websocket.StatusNormalClosure, "")
 }

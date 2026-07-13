@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"kyrux/core/security/crypton"
+	"log"
 	"reflect"
 )
 
@@ -45,6 +46,10 @@ func scanRows[T any](rows *sql.Rows, meta *ModelMeta) ([]T, error) {
 				if fv.Kind() == reflect.String && fv.CanSet() {
 					if dec, err := crypton.Decrypt(fv.String()); err == nil {
 						fv.SetString(dec)
+					} else {
+						// Mantém o ciphertext no campo, mas registra: chave errada
+						// ou dado corrompido não podem falhar em silêncio.
+						log.Printf("orm: decrypt coluna %s: %v", col, err)
 					}
 				}
 			}
