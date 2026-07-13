@@ -508,3 +508,91 @@ que separa "query builder ótimo" de "ORM completo". A boa notícia: o desenho
 atual (generics + reflection cacheada + SQL explícito) comporta tudo isso sem
 custo no hot path — e itens como `CreateAll` e `Each` deixam o framework mais
 rápido, não mais lento.
+
+---
+
+# Rodada 4 — Auditoria de segurança para produção (2026-07-13)
+
+> Revisão minuciosa de segurança com foco em prontidão para produção,
+> incluindo o código adicionado nas rodadas anteriores. **Todas as falhas
+> encontradas foram corrigidas** (não apenas reportadas). Resumo abaixo.
+
+## 🔴 Bloqueadores — CORRIGIDOS
+
+### A1. Campos `encrypt` cifrados com chave PÚBLICA quando a env faltava
+
+`SetEncryptionKey("")` derivava `SHA-256("")` — uma chave conhecida por
+qualquer um. A guarda `len(encryptionKey)==0` em Encrypt/Decrypt era **código
+morto**, porque a chave nunca ficava vazia. Efeito: sem `FIELD_ENCRYPTION_KEY`,
+dados marcados `kyrux:"encrypt"` (CPF, etc.) eram cifrados com segredo público
+— pior que texto claro, porque *parecia* protegido.
+
+**Correção:** `SetEncryptionKey("")` agora deixa a chave nil (fail-closed) —
+Encrypt/Decrypt retornam erro em vez de usar chave derivada de vazio. Bootstrap
+avisa quando a chave falta em produção e **aborta** se for o valor de exemplo.
+Testes: `crypton_test.go` (fail-closed + round-trip).
+
+### A2. Slowloris — sem `ReadHeaderTimeout`
+
+O `http.Server` tinha `ReadTimeout` mas não `ReadHeaderTimeout`, a defesa
+específica contra envio de cabeçalhos byte a byte (conexões presas esgotam o
+servidor). **Correção:** `ReadHeaderTimeout: 5s` adicionado; `ReadTimeout`
+ajustado para 15s (uploads legítimos maiores não são cortados no meio).
+
+## 🟠 Alto — CORRIGIDOS
+
+### A3. Brute-force de login dependia do dev lembrar do RateLimit
+
+A proteção contra força bruta existia só como middleware opt-in — se o
+desenvolvedor não o aplicasse na rota de login, um atacante testava senhas
+indefinidamente contra uma conta conhecida (o custo do Argon2id atrasa, mas
+não impede). **Correção:** freio embutido no próprio `auth.Login` — bloqueia
+por conta+IP após 10 falhas/minuto (`SetLoginThrottle` ajusta), reset no
+sucesso, defesa em profundidade **por padrão**. Testes: `throttle_test.go`.
+
+### A4. RateLimit inútil (ou burlável) atrás de proxy reverso
+
+`RateLimit` chaveava só por `RemoteAddr` — atrás de nginx/Caddy, todos os
+clientes compartilham o IP do proxy (limite vira global). **Correção:**
+`TRUSTED_PROXY_HEADER` no `.env` (ex: `X-Forwarded-For`) faz o middleware ler
+o IP real do cliente; sem a env, usa `RemoteAddr` (seguro em qualquer
+topologia — não confia em header forjável por padrão).
+
+## 🟢 Verificados e JÁ corretos (não precisaram de mudança)
+
+- **Debug page / stack trace:** restrita a `LocalhostOnly` **e** só registrada
+  quando `APP_ENV=development`. Em produção, panic → 500 estático, sem vazar
+  stack. ✔
+- **Segredos:** `.env` não é versionado (`.gitignore`); bootstrap aborta em
+  produção com SECRET_KEY curta/exemplo, PEPPER ausente/exemplo e (agora)
+  ENCRYPTION_KEY de exemplo. ✔
+- **CORS:** allowlist explícita, sem reflexão de origem arbitrária, sem
+  `Allow-Credentials`, com `Vary: Origin`. ✔
+- **CSP/headers de produção:** HSTS, X-Frame-Options DENY, nosniff,
+  Referrer-Policy, Permissions-Policy, CSP `script-src 'self'` (compatível com
+  o Realtime servido como arquivo externo). ✔
+- **Cookies:** sessão `HttpOnly+SameSite=Strict+Secure` (via settings, funciona
+  atrás de proxy); CSRF double-submit com HMAC e `Secure`. ✔
+- **JWT (auth):** formato próprio com HMAC-SHA256 e comparação em tempo
+  constante — sem campo `alg`, logo imune a alg-confusion. ✔
+- **Session fixation:** sessão anônima destruída no login. ✔
+- **Timing / user enumeration:** hash dummy equaliza "usuário não existe";
+  senha verificada antes do IsActive (inativo e senha errada custam igual). ✔
+- **SQL injection:** identificadores validados por regex (Select/OrderBy/
+  Join ON/WhereIn), placeholders em todo valor, WHERE obrigatório em
+  Update/Delete. ✔
+- **DoS de memória:** cache, sessões, fila e statements todos com teto. ✔
+
+## Checklist de deploy (documentado no USE.md)
+
+1. `APP_ENV=production`
+2. `SECRET_KEY` forte (≥32 chars), `PASSWORD_PEPPER` e — se usar `encrypt` —
+   `FIELD_ENCRYPTION_KEY` (todos gerados com `openssl rand -base64 32`).
+3. `ALLOWED_HOSTS` com os domínios reais.
+4. Atrás de proxy com TLS: definir `TRUSTED_PROXY_HEADER=X-Forwarded-For` e
+   garantir que o proxy sobrescreve esse header.
+5. Aplicar `RateLimit` nas rotas sensíveis (o throttle de login já é embutido).
+
+**Veredito:** com A1–A4 corrigidos, não há falha de segurança conhecida
+bloqueando produção. Itens de evolução (não-bloqueadores) seguem no roadmap:
+backend externo de sessão/revogação (S11) para múltiplas réplicas.

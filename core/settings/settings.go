@@ -57,6 +57,7 @@ type SecuritySettings struct {
 	AllowedHost   []string
 	Pepper        string
 	EncryptionKey string
+	TrustedProxy  string // header de IP real do cliente (ex: X-Forwarded-For); vazio = sem proxy
 }
 
 // InstalledApps é preenchido pelo core/apps/installed.go do projeto via init().
@@ -142,6 +143,7 @@ func Load() *Settings {
 			AllowedHost:   parseHosts(environment.Get("ALLOWED_HOSTS")),
 			Pepper:        environment.Get("PASSWORD_PEPPER"),
 			EncryptionKey: environment.Get("FIELD_ENCRYPTION_KEY"),
+			TrustedProxy:  environment.Get("TRUSTED_PROXY_HEADER"),
 		},
 	}
 

@@ -62,6 +62,7 @@ func Init(envPath string) (*Framework, error) {
 	csrf.SetSecure(!cfg.App.Debug)
 	csrf.SetSecret(cfg.Security.SecretKey)
 	session.SetSecureDefault(!cfg.App.Debug)
+	secmiddleware.SetTrustedProxyHeader(cfg.Security.TrustedProxy)
 
 	if !cfg.App.Debug {
 		if cfg.Security.SecretKey == "change-me" {
@@ -72,6 +73,14 @@ func Init(envPath string) (*Framework, error) {
 		}
 		if cfg.Security.Pepper == "" || cfg.Security.Pepper == "your-strong-random-pepper-here" {
 			log.Fatal("bootstrap: PASSWORD_PEPPER não definida — defina um pepper forte no .env antes de rodar em produção")
+		}
+		// FIELD_ENCRYPTION_KEY é opcional (nem todo app usa kyrux:"encrypt"),
+		// mas se ausente a criptografia fica desativada — avise, não derive
+		// silenciosamente uma chave de string vazia (segredo público).
+		if !crypton.HasEncryptionKey() {
+			log.Println("bootstrap: AVISO — FIELD_ENCRYPTION_KEY não definida; campos kyrux:\"encrypt\" falharão ao gravar. Defina no .env se usar criptografia de campos.")
+		} else if cfg.Security.EncryptionKey == "your-base64-32-byte-key-here" {
+			log.Fatal("bootstrap: FIELD_ENCRYPTION_KEY ainda é o valor de exemplo — gere uma chave forte (openssl rand -base64 32) antes de rodar em produção")
 		}
 	}
 
@@ -229,12 +238,15 @@ func (f *Framework) Run() error {
 	}
 
 	srv := &http.Server{
-		Addr:           addr,
-		Handler:        f.Router,
-		ReadTimeout:    5 * time.Second,
-		WriteTimeout:   writeTimeout,
-		IdleTimeout:    120 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+		Addr:    addr,
+		Handler: f.Router,
+		// ReadHeaderTimeout limita o tempo de envio dos cabeçalhos —
+		// defesa direta contra Slowloris (headers enviados byte a byte).
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	quit := make(chan os.Signal, 1)

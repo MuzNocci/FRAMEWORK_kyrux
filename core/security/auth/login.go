@@ -6,6 +6,7 @@ import (
 	"kyrux/core/orm"
 	"kyrux/core/security/crypton"
 	"kyrux/core/security/session"
+	"net"
 	"net/http"
 	"reflect"
 	"strings"
@@ -118,6 +119,14 @@ func equalizeTiming(password string) {
 	}
 }
 
+// loginClientIP extrai o IP (sem porta) do request para chavear o throttle.
+func loginClientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return strings.Trim(r.RemoteAddr, "[]")
+}
+
 // Login autentica o usuário pelo campo configurado (username ou email) e senha.
 // Em caso de sucesso cria a sessão, grava o cookie e retorna a sessão.
 // Os erros possíveis são ErrUserNotFound, ErrInactiveUser e ErrWrongPassword —
@@ -127,20 +136,32 @@ func Login(db *database.DB, store *session.Store, w http.ResponseWriter, r *http
 	if !dbEnabled {
 		return nil, ErrAuthDisabled
 	}
+
+	// Freio de brute-force por conta+IP: bloqueia após N falhas na janela,
+	// mesmo sem o middleware RateLimit na rota (defesa em profundidade).
+	throttleKey := loginValue + "|" + loginClientIP(r)
+	if throttle.blocked(throttleKey) {
+		return nil, ErrTooManyAttempts
+	}
+
 	user, err := orm.FromDB[User](db).Where(loginColumn+" = ?", loginValue).First()
 	if err != nil {
 		equalizeTiming(password)
+		throttle.fail(throttleKey)
 		return nil, ErrUserNotFound
 	}
 	// Verifica a senha antes de checar IsActive para que usuário inativo
 	// e senha errada custem o mesmo tempo (sem vazar o estado da conta).
 	passwordOK := user.CheckPassword(password)
 	if !user.IsActive {
+		throttle.fail(throttleKey)
 		return nil, ErrInactiveUser
 	}
 	if !passwordOK {
+		throttle.fail(throttleKey)
 		return nil, ErrWrongPassword
 	}
+	throttle.reset(throttleKey)
 
 	// Apagar sessão anônima existente antes de criar a autenticada (session fixation).
 	if old, ok := session.FromRequest(r, store); ok {

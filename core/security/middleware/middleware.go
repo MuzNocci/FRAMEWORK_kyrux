@@ -173,7 +173,7 @@ func RateLimit(max int, window time.Duration) router.MiddlewareFunc {
 	)
 	return func(next router.HandlerFunc) router.HandlerFunc {
 		return func(ctx *router.Context) {
-			ip := clientIP(ctx.Request.RemoteAddr)
+			ip := realIP(ctx.Request)
 			now := time.Now()
 
 			mu.Lock()
@@ -204,6 +204,32 @@ func RateLimit(max int, window time.Duration) router.MiddlewareFunc {
 			next(ctx)
 		}
 	}
+}
+
+// trustedProxyHeader, quando definido, é o header do qual o IP real do cliente
+// é lido (ex: "X-Forwarded-For"). Só ative se o Kyrux estiver atrás de um proxy
+// reverso que SOBRESCREVE esse header — caso contrário o cliente pode forjá-lo
+// e escapar do RateLimit. Configurado no bootstrap via TRUSTED_PROXY_HEADER.
+var trustedProxyHeader string
+
+// SetTrustedProxyHeader define o header de IP real do cliente (proxy confiável).
+// String vazia (padrão) usa apenas RemoteAddr — seguro em qualquer topologia.
+func SetTrustedProxyHeader(h string) { trustedProxyHeader = h }
+
+// realIP resolve o IP do cliente. Atrás de proxy confiável, lê o primeiro IP
+// do header configurado (o cliente original numa cadeia "cliente, proxy1, ...").
+func realIP(r *http.Request) string {
+	if trustedProxyHeader != "" {
+		if v := r.Header.Get(trustedProxyHeader); v != "" {
+			if i := strings.IndexByte(v, ','); i != -1 {
+				v = v[:i]
+			}
+			if ip := strings.TrimSpace(v); ip != "" {
+				return ip
+			}
+		}
+	}
+	return clientIP(r.RemoteAddr)
 }
 
 // clientIP extrai o IP (sem porta) de um RemoteAddr, com suporte a IPv6.

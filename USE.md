@@ -1891,13 +1891,34 @@ Zero falhas em 200.000 requisições totais.
 > Medido em localhost com `SERVER_WORKERS=4`, respeitando a configuração do `.env`.
 > Resultados variam conforme hardware e carga de trabalho da view.
 
+### Checklist de produção (segurança)
+
+O bootstrap **recusa iniciar** em `APP_ENV=production` se algum segredo estiver
+ausente ou for o valor de exemplo. Antes de subir:
+
+1. `APP_ENV=production`.
+2. `SECRET_KEY` forte (≥ 32 caracteres). `PASSWORD_PEPPER` definido. Se usar
+   campos `kyrux:"encrypt"`, também `FIELD_ENCRYPTION_KEY`. Gere cada um com
+   `openssl rand -base64 32`. **Sem `FIELD_ENCRYPTION_KEY` a criptografia de
+   campos falha ao gravar** (fail-closed — nunca cifra com chave fraca).
+3. `ALLOWED_HOSTS` com os domínios reais (bloqueia Host header forjado).
+4. Atrás de proxy reverso com TLS: defina `TRUSTED_PROXY_HEADER=X-Forwarded-For`
+   e garanta que o proxy **sobrescreve** esse header (senão o cliente forja o
+   IP e escapa do RateLimit). Sem proxy, deixe em branco.
+5. Aplique `RateLimit` nas rotas sensíveis. O login já tem freio de brute-force
+   embutido (10 falhas/minuto por conta+IP; ajuste com `auth.SetLoginThrottle`).
+
+Em produção, os headers de segurança (HSTS, CSP, X-Frame-Options DENY, nosniff),
+o cookie de sessão `Secure` e a página de erro sem stack trace são ativados
+automaticamente. A debug page só existe em `development` e apenas para localhost.
+
 ### Deploy e HTTP/2
 
 O Kyrux serve HTTP/1.1 (sem TLS próprio). O deploy recomendado é atrás de um
 proxy reverso (nginx, Caddy, Traefik) que termina TLS e fala HTTP/2/3 com o
 browser — o proxy conversa com o Kyrux em HTTP/1.1 com keep-alive, o que não
-limita o throughput. Configure o proxy para repassar o IP real do cliente
-(`X-Forwarded-For`) se usar `RateLimit`.
+limita o throughput. Configure `TRUSTED_PROXY_HEADER` (acima) para o `RateLimit`
+e o throttle de login enxergarem o IP real do cliente.
 
 Sobre `SERVER_WORKERS`: **omita em produção** — o runtime Go usa todos os CPUs
 por padrão, que é o mais rápido. Defina apenas para limitar consumo de CPU

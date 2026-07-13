@@ -142,10 +142,22 @@ var encryptionKey []byte
 
 // SetEncryptionKey deriva uma chave AES-256 a partir de key (qualquer tamanho)
 // e a armazena para uso em Encrypt/Decrypt. Chamado uma vez no bootstrap.
+//
+// Chave vazia deixa a criptografia DESATIVADA (fail-closed): Encrypt/Decrypt
+// passam a retornar erro em vez de derivar uma chave de string vazia — o que
+// seria um segredo público (SHA-256 de "") e cifraria dados com chave conhecida.
 func SetEncryptionKey(key string) {
+	if key == "" {
+		encryptionKey = nil
+		return
+	}
 	h := sha256.Sum256([]byte(key))
 	encryptionKey = h[:]
 }
+
+// HasEncryptionKey informa se há chave de criptografia configurada.
+// O bootstrap usa isto para avisar quando FIELD_ENCRYPTION_KEY falta em produção.
+func HasEncryptionKey() bool { return len(encryptionKey) > 0 }
 
 const encPrefix = "$enc$"
 
