@@ -89,16 +89,38 @@ func (db *DB) WithSchema(schema string) *DB {
 	return &DB{DB: db.DB, Driver: db.Driver, Schema: schema, stmts: db.stmts}
 }
 
-func (db *DB) Transaction(fn func(tx *sql.Tx) error) error {
-	tx, err := db.Begin()
+// Tx embrulha *sql.Tx com o driver e o schema da conexão de origem,
+// permitindo usar o ORM dentro da transação (orm.FromTx / orm.CreateTx).
+// Os métodos de *sql.Tx (Exec, Query, QueryRow...) continuam disponíveis.
+type Tx struct {
+	*sql.Tx
+	Driver string
+	Schema string
+}
+
+// Transaction executa fn dentro de uma transação: commit se fn devolver nil,
+// rollback caso contrário — inclusive em panic (que é re-propagado).
+//
+//	err := fw.DB.Use().Transaction(func(tx *database.Tx) error {
+//	    if err := orm.CreateTx(tx, &pedido); err != nil { return err }
+//	    return orm.FromTx[Saldo](tx).Where("id = ?", 1).Update(map[string]any{"valor": novo})
+//	})
+func (db *DB) Transaction(fn func(tx *Tx) error) error {
+	sqlTx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	if err := fn(tx); err != nil {
-		tx.Rollback()
+	defer func() {
+		if r := recover(); r != nil {
+			sqlTx.Rollback()
+			panic(r)
+		}
+	}()
+	if err := fn(&Tx{Tx: sqlTx, Driver: db.Driver, Schema: db.Schema}); err != nil {
+		sqlTx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	return sqlTx.Commit()
 }
 
 // Manager gerencia múltiplas conexões SQL nomeadas.

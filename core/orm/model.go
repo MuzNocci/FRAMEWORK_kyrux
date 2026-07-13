@@ -15,9 +15,11 @@ type Field struct {
 	IsPK      bool
 	IsHash    bool // kyrux:"hash"    — auto-hash Argon2id na escrita
 	IsEncrypt bool // kyrux:"encrypt" — auto-cifra AES-256-GCM na escrita, decifra na leitura
+	IsAutoNow bool // kyrux:"autonow" — CURRENT_TIMESTAMP automático em todo Update (ex: updated_at)
 	GoIndex   int
 	Size      int    // kyrux:"size:N" — usado por migrations
 	Default   string // kyrux:"default:value" — valor padrão SQL se campo for vazio
+	FK        string // kyrux:"fk:tabela" — REFERENCES tabela(id) na migration
 }
 
 // ModelMeta contém os metadados pré-computados de um model.
@@ -75,13 +77,21 @@ func buildMeta(t reflect.Type) *ModelMeta {
 				f.IsHash = true
 			case part == "encrypt":
 				f.IsEncrypt = true
+			case part == "autonow":
+				f.IsAutoNow = true
 			case strings.HasPrefix(part, "column:"):
 				f.Column = strings.TrimPrefix(part, "column:")
 			case strings.HasPrefix(part, "size:"):
 				f.Size, _ = strconv.Atoi(strings.TrimPrefix(part, "size:"))
 			case strings.HasPrefix(part, "default:"):
 				f.Default = strings.TrimPrefix(part, "default:")
+			case strings.HasPrefix(part, "fk:"):
+				f.FK = strings.TrimPrefix(part, "fk:")
 			}
+		}
+		// autonow implica preenchimento no INSERT quando o campo está zerado.
+		if f.IsAutoNow && f.Default == "" {
+			f.Default = "CURRENT_TIMESTAMP"
 		}
 		meta.Fields = append(meta.Fields, f)
 		if f.IsPK && meta.PKField == nil {
@@ -96,15 +106,23 @@ func buildMeta(t reflect.Type) *ModelMeta {
 	return meta
 }
 
-// toSnake converte CamelCase para snake_case.
+// toSnake converte CamelCase para snake_case com tratamento de acrônimos:
+// ID → id, UserID → user_id, HTTPServer → http_server.
 func toSnake(s string) string {
 	var b strings.Builder
 	b.Grow(len(s) + 4)
-	for i, r := range s {
-		if unicode.IsUpper(r) && i > 0 {
-			b.WriteByte('_')
+	rs := []rune(s)
+	for i, r := range rs {
+		if unicode.IsUpper(r) {
+			// Underscore antes de maiúscula que inicia palavra nova:
+			// após minúscula, ou maiúscula seguida de minúscula (fim de acrônimo).
+			if i > 0 && (!unicode.IsUpper(rs[i-1]) || (i+1 < len(rs) && unicode.IsLower(rs[i+1]))) {
+				b.WriteByte('_')
+			}
+			b.WriteRune(unicode.ToLower(r))
+		} else {
+			b.WriteRune(r)
 		}
-		b.WriteRune(unicode.ToLower(r))
 	}
 	return b.String()
 }

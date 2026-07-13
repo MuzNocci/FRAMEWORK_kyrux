@@ -82,6 +82,7 @@ type migField struct {
 	IsPK    bool
 	NotNull bool
 	Unique  bool
+	FK      string // kyrux:"fk:tabela" → REFERENCES tabela(id) + índice
 }
 
 type migModel struct {
@@ -166,6 +167,8 @@ func migBuildField(name, goType, kyruxTag string, notNull bool) migField {
 			fd.Column = strings.TrimPrefix(part, "column:")
 		case strings.HasPrefix(part, "size:"):
 			fd.Size, _ = strconv.Atoi(strings.TrimPrefix(part, "size:"))
+		case strings.HasPrefix(part, "fk:"):
+			fd.FK = strings.TrimPrefix(part, "fk:")
 		}
 	}
 	return fd
@@ -202,6 +205,11 @@ func migGenerateSQL(models []migModel, driver string) string {
 				fmt.Fprintf(&sb, "\nCREATE UNIQUE INDEX IF NOT EXISTS %s_%s_idx ON %s (%s);\n",
 					m.Table, f.Column, m.Table, f.Column)
 			}
+			// FK sempre ganha índice — JOINs e deletes em cascata dependem dele.
+			if f.FK != "" && !f.Unique {
+				fmt.Fprintf(&sb, "\nCREATE INDEX IF NOT EXISTS %s_%s_idx ON %s (%s);\n",
+					m.Table, f.Column, m.Table, f.Column)
+			}
 		}
 	}
 
@@ -210,7 +218,7 @@ func migGenerateSQL(models []migModel, driver string) string {
 	for i := len(models) - 1; i >= 0; i-- {
 		m := models[i]
 		for _, f := range m.Fields {
-			if f.Unique && !f.IsPK {
+			if (f.Unique || f.FK != "") && !f.IsPK {
 				fmt.Fprintf(&sb, "DROP INDEX IF EXISTS %s_%s_idx;\n", m.Table, f.Column)
 			}
 		}
@@ -266,6 +274,11 @@ func migConstraints(f migField, isPostgres bool) string {
 	}
 	if f.Unique {
 		parts = append(parts, "UNIQUE")
+	}
+	// FK: a tabela referenciada precisa existir antes — declare o model
+	// referenciado primeiro (ou em migration anterior).
+	if f.FK != "" {
+		parts = append(parts, fmt.Sprintf("REFERENCES %s(id)", f.FK))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -364,13 +377,19 @@ func migExtractTag(raw, key string) string {
 
 // ── helpers de nomenclatura (espelho do ORM) ──────────────────────────────────
 
+// migToSnake espelha orm.toSnake, com tratamento de acrônimos (UserID → user_id).
 func migToSnake(s string) string {
 	var b strings.Builder
-	for i, r := range s {
-		if unicode.IsUpper(r) && i > 0 {
-			b.WriteByte('_')
+	rs := []rune(s)
+	for i, r := range rs {
+		if unicode.IsUpper(r) {
+			if i > 0 && (!unicode.IsUpper(rs[i-1]) || (i+1 < len(rs) && unicode.IsLower(rs[i+1]))) {
+				b.WriteByte('_')
+			}
+			b.WriteRune(unicode.ToLower(r))
+		} else {
+			b.WriteRune(r)
 		}
-		b.WriteRune(unicode.ToLower(r))
 	}
 	return b.String()
 }

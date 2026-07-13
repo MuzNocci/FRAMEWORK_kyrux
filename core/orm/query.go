@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"kyrux/core/database"
 	"kyrux/core/security/crypton"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -16,18 +17,42 @@ var reIdent = regexp.MustCompile(`(?i)^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z
 
 func validIdent(s string) bool { return reIdent.MatchString(strings.TrimSpace(s)) }
 
+// sqlExec é satisfeito por *database.DB e *database.Tx — permite que o mesmo
+// builder execute dentro e fora de transações.
+type sqlExec interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// stmtPreparer é implementado por *database.DB (cache LRU de statements).
+// Transações executam direto — o *sql.Tx já tem afinidade de conexão.
+type stmtPreparer interface {
+	PrepareCached(query string) (*sql.Stmt, error)
+}
+
+// whereClause é uma condição do WHERE com o conectivo que a liga à anterior.
+type whereClause struct {
+	cond string
+	or   bool
+}
+
 // Query é um builder fluente de consultas SQL para o tipo T.
-// Construa com orm.From[T](connName) ou orm.FromDB[T](db) e encadeie os métodos antes de executar.
+// Construa com orm.From[T](connName), orm.FromDB[T](db) ou orm.FromTx[T](tx)
+// e encadeie os métodos antes de executar.
 type Query[T any] struct {
-	db      *database.DB
-	meta    *ModelMeta
-	cols    []string
-	where   []string
-	args    []any
-	orderBy string
-	limit   int
-	offset  int
-	err     error
+	exec     sqlExec
+	driver   string
+	schema   string
+	meta     *ModelMeta
+	cols     []string
+	where    []whereClause
+	args     []any
+	orderBy  []string
+	distinct bool
+	limit    int
+	offset   int
+	err      error
 }
 
 // Select define as colunas a retornar (ex: "id", "first_name", "email").
@@ -44,23 +69,84 @@ func (q *Query[T]) Select(cols ...string) *Query[T] {
 	return q
 }
 
+// Distinct adiciona DISTINCT ao SELECT.
+func (q *Query[T]) Distinct() *Query[T] {
+	q.distinct = true
+	return q
+}
+
 // Where adiciona uma condição AND à cláusula WHERE.
 // Use ? como placeholder; para PostgreSQL são reescritos para $N automaticamente.
 //
 //	q.Where("active = ?", true).Where("age > ?", 18)
 func (q *Query[T]) Where(cond string, args ...any) *Query[T] {
-	q.where = append(q.where, cond)
+	q.where = append(q.where, whereClause{cond: cond})
 	q.args = append(q.args, args...)
 	return q
 }
 
-// OrderBy define a cláusula ORDER BY (ex: "created_at DESC").
-func (q *Query[T]) OrderBy(col string) *Query[T] {
+// OrWhere adiciona uma condição OR à cláusula WHERE. Cada condição é
+// parentesizada individualmente; a precedência entre AND e OR segue o SQL
+// (AND liga mais forte).
+//
+//	q.Where("tipo = ?", "a").OrWhere("tipo = ?", "b") // (tipo = ?) OR (tipo = ?)
+func (q *Query[T]) OrWhere(cond string, args ...any) *Query[T] {
+	q.where = append(q.where, whereClause{cond: cond, or: true})
+	q.args = append(q.args, args...)
+	return q
+}
+
+// WhereIn adiciona "col IN (...)" com expansão automática de placeholders.
+// Aceita valores variádicos ou um único slice:
+//
+//	q.WhereIn("id", 1, 2, 3)
+//	q.WhereIn("id", ids) // ids pode ser []int64, []string, etc.
+//
+// Lista vazia corresponde a nenhum resultado (comportamento do Django __in=[]).
+func (q *Query[T]) WhereIn(col string, vals ...any) *Query[T] {
 	if !validIdent(col) {
-		q.err = fmt.Errorf("orm: orderby: identificador inválido: %q", col)
+		q.err = fmt.Errorf("orm: wherein: identificador inválido: %q", col)
 		return q
 	}
-	q.orderBy = col
+	if len(vals) == 1 {
+		if rv := reflect.ValueOf(vals[0]); rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+			expanded := make([]any, rv.Len())
+			for i := range expanded {
+				expanded[i] = rv.Index(i).Interface()
+			}
+			vals = expanded
+		}
+	}
+	if len(vals) == 0 {
+		q.where = append(q.where, whereClause{cond: "1 = 0"})
+		return q
+	}
+	var sb strings.Builder
+	sb.WriteString(col)
+	sb.WriteString(" IN (")
+	for i := range vals {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteByte('?')
+	}
+	sb.WriteByte(')')
+	q.where = append(q.where, whereClause{cond: sb.String()})
+	q.args = append(q.args, vals...)
+	return q
+}
+
+// OrderBy define a ordenação — aceita múltiplas colunas, como no Django:
+//
+//	q.OrderBy("criado_em DESC", "id ASC")
+func (q *Query[T]) OrderBy(cols ...string) *Query[T] {
+	for _, c := range cols {
+		if !validIdent(c) {
+			q.err = fmt.Errorf("orm: orderby: identificador inválido: %q", c)
+			return q
+		}
+	}
+	q.orderBy = append(q.orderBy, cols...)
 	return q
 }
 
@@ -76,23 +162,57 @@ func (q *Query[T]) Offset(n int) *Query[T] {
 	return q
 }
 
+// ── execução ──────────────────────────────────────────────────────────────────
+
+// queryRows executa via cache de statements quando disponível (conexão),
+// ou direto (transação).
+func (q *Query[T]) queryRows(sqlStr string, args []any) (*sql.Rows, error) {
+	if p, ok := q.exec.(stmtPreparer); ok {
+		if stmt, err := p.PrepareCached(sqlStr); err == nil {
+			return stmt.Query(args...)
+		}
+	}
+	return q.exec.Query(sqlStr, args...)
+}
+
+// scanRow executa a query e escaneia a única linha esperada em dest.
+func (q *Query[T]) scanRow(sqlStr string, args []any, dest ...any) error {
+	if p, ok := q.exec.(stmtPreparer); ok {
+		if stmt, err := p.PrepareCached(sqlStr); err == nil {
+			return stmt.QueryRow(args...).Scan(dest...)
+		}
+	}
+	return q.exec.QueryRow(sqlStr, args...).Scan(dest...)
+}
+
 // All executa a query e retorna todas as linhas encontradas.
 func (q *Query[T]) All() ([]T, error) {
 	if q.err != nil {
 		return nil, q.err
 	}
 	sqlStr, args := q.buildSelect(0)
-	rows, err := func() (*sql.Rows, error) {
-		if stmt, perr := q.db.PrepareCached(sqlStr); perr == nil {
-			return stmt.Query(args...)
-		}
-		return q.db.Query(sqlStr, args...)
-	}()
+	rows, err := q.queryRows(sqlStr, args)
 	if err != nil {
 		return nil, fmt.Errorf("orm: all: %w", err)
 	}
 	defer rows.Close()
 	return scanRows[T](rows, q.meta)
+}
+
+// Each itera o resultado em streaming, uma linha por vez — memória O(1),
+// indicado para result sets grandes (equivalente ao iterator() do Django).
+// fn devolvendo erro interrompe a iteração e propaga o erro.
+func (q *Query[T]) Each(fn func(*T) error) error {
+	if q.err != nil {
+		return q.err
+	}
+	sqlStr, args := q.buildSelect(0)
+	rows, err := q.queryRows(sqlStr, args)
+	if err != nil {
+		return fmt.Errorf("orm: each: %w", err)
+	}
+	defer rows.Close()
+	return eachRow(rows, q.meta, fn)
 }
 
 // First retorna a primeira linha encontrada.
@@ -102,12 +222,7 @@ func (q *Query[T]) First() (*T, error) {
 		return nil, q.err
 	}
 	sqlStr, args := q.buildSelect(1)
-	rows, err := func() (*sql.Rows, error) {
-		if stmt, perr := q.db.PrepareCached(sqlStr); perr == nil {
-			return stmt.Query(args...)
-		}
-		return q.db.Query(sqlStr, args...)
-	}()
+	rows, err := q.queryRows(sqlStr, args)
 	if err != nil {
 		return nil, fmt.Errorf("orm: first: %w", err)
 	}
@@ -122,6 +237,60 @@ func (q *Query[T]) First() (*T, error) {
 	return &results[0], nil
 }
 
+// Last retorna a última linha segundo a ordenação atual (invertida).
+// Sem OrderBy, usa a chave primária em ordem decrescente.
+func (q *Query[T]) Last() (*T, error) {
+	rq := *q
+	rq.orderBy = reverseOrder(q.orderBy, q.meta)
+	return rq.First()
+}
+
+// reverseOrder inverte a direção de cada termo do ORDER BY.
+func reverseOrder(terms []string, meta *ModelMeta) []string {
+	if len(terms) == 0 {
+		if meta.PKField != nil {
+			return []string{meta.PKField.Column + " DESC"}
+		}
+		return nil
+	}
+	out := make([]string, len(terms))
+	for i, t := range terms {
+		t = strings.TrimSpace(t)
+		u := strings.ToUpper(t)
+		switch {
+		case strings.HasSuffix(u, " DESC"):
+			out[i] = strings.TrimSpace(t[:len(t)-5]) + " ASC"
+		case strings.HasSuffix(u, " ASC"):
+			out[i] = strings.TrimSpace(t[:len(t)-4]) + " DESC"
+		default:
+			out[i] = t + " DESC"
+		}
+	}
+	return out
+}
+
+// Exists reporta se ao menos uma linha corresponde ao filtro atual —
+// mais barato que Count() (SELECT 1 ... LIMIT 1).
+func (q *Query[T]) Exists() (bool, error) {
+	if q.err != nil {
+		return false, q.err
+	}
+	var sb strings.Builder
+	sb.WriteString("SELECT 1 FROM ")
+	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
+	q.writeWhere(&sb)
+	sb.WriteString(" LIMIT 1")
+	var one int
+	err := q.scanRow(rewritePlaceholders(q.driver, sb.String()), q.args, &one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("orm: exists: %w", err)
+	}
+	return true, nil
+}
+
 // Count retorna o número de linhas que correspondem ao filtro atual.
 func (q *Query[T]) Count() (int64, error) {
 	if q.err != nil {
@@ -129,33 +298,47 @@ func (q *Query[T]) Count() (int64, error) {
 	}
 	var sb strings.Builder
 	sb.WriteString("SELECT COUNT(*) FROM ")
-	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
-	if len(q.where) > 0 {
-		sb.WriteString(" WHERE ")
-		for i, w := range q.where {
-			if i > 0 {
-				sb.WriteString(" AND ")
-			}
-			sb.WriteString(w)
-		}
-	}
-	sqlStr := rewritePlaceholders(q.db.Driver, sb.String())
+	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
+	q.writeWhere(&sb)
 	var n int64
-	if stmt, perr := q.db.PrepareCached(sqlStr); perr == nil {
-		if err := stmt.QueryRow(q.args...).Scan(&n); err != nil {
-			return 0, fmt.Errorf("orm: count: %w", err)
-		}
-	} else {
-		if err := q.db.QueryRow(sqlStr, q.args...).Scan(&n); err != nil {
-			return 0, fmt.Errorf("orm: count: %w", err)
-		}
+	if err := q.scanRow(rewritePlaceholders(q.driver, sb.String()), q.args, &n); err != nil {
+		return 0, fmt.Errorf("orm: count: %w", err)
 	}
 	return n, nil
 }
 
+// aggregate executa uma função de agregação SQL sobre a coluna.
+func (q *Query[T]) aggregate(fn, col string) (float64, error) {
+	if q.err != nil {
+		return 0, q.err
+	}
+	if !validIdent(col) {
+		return 0, fmt.Errorf("orm: %s: identificador inválido: %q", strings.ToLower(fn), col)
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "SELECT %s(%s) FROM %s", fn, col, qualifiedTable(q.schema, q.meta.Table))
+	q.writeWhere(&sb)
+	var v sql.NullFloat64
+	if err := q.scanRow(rewritePlaceholders(q.driver, sb.String()), q.args, &v); err != nil {
+		return 0, fmt.Errorf("orm: %s: %w", strings.ToLower(fn), err)
+	}
+	return v.Float64, nil
+}
+
+// Sum/Avg/Min/Max agregam uma coluna numérica respeitando o filtro atual.
+// Sem linhas correspondentes (NULL), retornam 0.
+func (q *Query[T]) Sum(col string) (float64, error) { return q.aggregate("SUM", col) }
+func (q *Query[T]) Avg(col string) (float64, error) { return q.aggregate("AVG", col) }
+func (q *Query[T]) Min(col string) (float64, error) { return q.aggregate("MIN", col) }
+func (q *Query[T]) Max(col string) (float64, error) { return q.aggregate("MAX", col) }
+
 // Update atualiza as colunas de values para as linhas que correspondem ao WHERE.
 // Exige ao menos uma cláusula WHERE para evitar atualizações acidentais globais.
+// Campos com tag autonow ausentes de values recebem CURRENT_TIMESTAMP.
 func (q *Query[T]) Update(values map[string]any) error {
+	if q.err != nil {
+		return q.err
+	}
 	if len(q.where) == 0 {
 		return fmt.Errorf("orm: update sem WHERE não é permitido")
 	}
@@ -173,7 +356,7 @@ func (q *Query[T]) Update(values map[string]any) error {
 	}
 	sort.Strings(keys)
 
-	setClauses := make([]string, 0, len(keys))
+	setClauses := make([]string, 0, len(keys)+1)
 	args := make([]any, 0, len(keys)+len(q.args))
 	for _, col := range keys {
 		setClauses = append(setClauses, col+" = ?")
@@ -201,22 +384,26 @@ func (q *Query[T]) Update(values map[string]any) error {
 		}
 		args = append(args, val)
 	}
+
+	// autonow: campos como updated_at são atualizados automaticamente
+	// quando não vierem explícitos em values.
+	for _, f := range q.meta.Fields {
+		if f.IsAutoNow {
+			if _, present := values[f.Column]; !present {
+				setClauses = append(setClauses, f.Column+" = CURRENT_TIMESTAMP")
+			}
+		}
+	}
+
 	args = append(args, q.args...)
 
 	var sb strings.Builder
 	sb.WriteString("UPDATE ")
-	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
+	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
 	sb.WriteString(" SET ")
 	sb.WriteString(strings.Join(setClauses, ", "))
-	sb.WriteString(" WHERE ")
-	for i, w := range q.where {
-		if i > 0 {
-			sb.WriteString(" AND ")
-		}
-		sb.WriteString(w)
-	}
-	sqlStr := sb.String()
-	if _, err := q.db.Exec(rewritePlaceholders(q.db.Driver, sqlStr), args...); err != nil {
+	q.writeWhere(&sb)
+	if _, err := q.exec.Exec(rewritePlaceholders(q.driver, sb.String()), args...); err != nil {
 		return fmt.Errorf("orm: update: %w", err)
 	}
 	return nil
@@ -225,23 +412,53 @@ func (q *Query[T]) Update(values map[string]any) error {
 // Delete remove as linhas que correspondem ao WHERE.
 // Exige ao menos uma cláusula WHERE para evitar deleções acidentais globais.
 func (q *Query[T]) Delete() error {
+	if q.err != nil {
+		return q.err
+	}
 	if len(q.where) == 0 {
 		return fmt.Errorf("orm: delete sem WHERE não é permitido")
 	}
-	var dsb strings.Builder
-	dsb.WriteString("DELETE FROM ")
-	dsb.WriteString(qualifiedTable(q.db, q.meta.Table))
-	dsb.WriteString(" WHERE ")
-	for i, w := range q.where {
-		if i > 0 {
-			dsb.WriteString(" AND ")
-		}
-		dsb.WriteString(w)
-	}
-	if _, err := q.db.Exec(rewritePlaceholders(q.db.Driver, dsb.String()), q.args...); err != nil {
+	var sb strings.Builder
+	sb.WriteString("DELETE FROM ")
+	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
+	q.writeWhere(&sb)
+	if _, err := q.exec.Exec(rewritePlaceholders(q.driver, sb.String()), q.args...); err != nil {
 		return fmt.Errorf("orm: delete: %w", err)
 	}
 	return nil
+}
+
+// GetOrCreate devolve a primeira linha do filtro atual; se não existir,
+// insere defaults e o devolve com created=true.
+//
+// Como o Where é SQL livre, os campos do filtro NÃO são copiados para
+// defaults — preencha defaults com todos os valores do novo registro,
+// incluindo os usados no filtro (equivalente ao get_or_create do Django).
+func (q *Query[T]) GetOrCreate(defaults *T) (obj *T, created bool, err error) {
+	obj, err = q.First()
+	if err == nil {
+		return obj, false, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, false, err
+	}
+	if err := createInto(q.exec, q.driver, q.schema, defaults); err != nil {
+		return nil, false, err
+	}
+	return defaults, true, nil
+}
+
+// UpdateOrCreate atualiza as linhas do filtro com values; se nenhuma existir,
+// insere defaults (created=true). Equivalente ao update_or_create do Django.
+func (q *Query[T]) UpdateOrCreate(values map[string]any, defaults *T) (created bool, err error) {
+	exists, err := q.Exists()
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return false, q.Update(values)
+	}
+	return true, createInto(q.exec, q.driver, q.schema, defaults)
 }
 
 // Page contém o resultado paginado de uma consulta.
@@ -281,12 +498,7 @@ func (q *Query[T]) Paginate(page, pageSize int) (Page[T], error) {
 
 	offset := (page - 1) * pageSize
 	sqlStr, args := q.buildSelectPage(pageSize, offset)
-	rows, err := func() (*sql.Rows, error) {
-		if stmt, perr := q.db.PrepareCached(sqlStr); perr == nil {
-			return stmt.Query(args...)
-		}
-		return q.db.Query(sqlStr, args...)
-	}()
+	rows, err := q.queryRows(sqlStr, args)
 	if err != nil {
 		return Page[T]{}, fmt.Errorf("orm: paginate: %w", err)
 	}
@@ -325,12 +537,7 @@ func (q *Query[T]) PaginateNoCount(page, pageSize int) (Page[T], error) {
 
 	offset := (page - 1) * pageSize
 	sqlStr, args := q.buildSelectPage(pageSize+1, offset)
-	rows, err := func() (*sql.Rows, error) {
-		if stmt, perr := q.db.PrepareCached(sqlStr); perr == nil {
-			return stmt.Query(args...)
-		}
-		return q.db.Query(sqlStr, args...)
-	}()
+	rows, err := q.queryRows(sqlStr, args)
 	if err != nil {
 		return Page[T]{}, fmt.Errorf("orm: paginate: %w", err)
 	}
@@ -357,11 +564,33 @@ func (q *Query[T]) PaginateNoCount(page, pageSize int) (Page[T], error) {
 	}, nil
 }
 
-// buildSelect monta o SQL SELECT respeitando os filtros, ordem e limite.
-// O parâmetro forceLimit substitui q.limit quando > 0 (usado por First).
-func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
-	var sb strings.Builder
+// ── construção de SQL ─────────────────────────────────────────────────────────
+
+// writeWhere escreve a cláusula WHERE com cada condição parentesizada.
+func (q *Query[T]) writeWhere(sb *strings.Builder) {
+	if len(q.where) == 0 {
+		return
+	}
+	sb.WriteString(" WHERE ")
+	for i, w := range q.where {
+		if i > 0 {
+			if w.or {
+				sb.WriteString(" OR ")
+			} else {
+				sb.WriteString(" AND ")
+			}
+		}
+		sb.WriteByte('(')
+		sb.WriteString(w.cond)
+		sb.WriteByte(')')
+	}
+}
+
+func (q *Query[T]) writeSelectHead(sb *strings.Builder) {
 	sb.WriteString("SELECT ")
+	if q.distinct {
+		sb.WriteString("DISTINCT ")
+	}
 	if len(q.cols) > 0 {
 		for i, c := range q.cols {
 			if i > 0 {
@@ -373,21 +602,24 @@ func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 		sb.WriteByte('*')
 	}
 	sb.WriteString(" FROM ")
-	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
+	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
+}
 
-	if len(q.where) > 0 {
-		sb.WriteString(" WHERE ")
-		for i, w := range q.where {
-			if i > 0 {
-				sb.WriteString(" AND ")
-			}
-			sb.WriteString(w)
-		}
-	}
-	if q.orderBy != "" {
+func (q *Query[T]) writeOrderBy(sb *strings.Builder) {
+	if len(q.orderBy) > 0 {
 		sb.WriteString(" ORDER BY ")
-		sb.WriteString(q.orderBy)
+		sb.WriteString(strings.Join(q.orderBy, ", "))
 	}
+}
+
+// buildSelect monta o SQL SELECT respeitando os filtros, ordem e limite.
+// O parâmetro forceLimit substitui q.limit quando > 0 (usado por First).
+func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
+	var sb strings.Builder
+	q.writeSelectHead(&sb)
+	q.writeWhere(&sb)
+	q.writeOrderBy(&sb)
+
 	// LIMIT/OFFSET como placeholders: o SQL fica idêntico entre páginas,
 	// então o cache de prepared statements é reaproveitado de verdade.
 	lim := q.limit
@@ -406,41 +638,24 @@ func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 		sb.WriteString(" OFFSET ?")
 		args = append(args, q.offset)
 	}
-	return rewritePlaceholders(q.db.Driver, sb.String()), args
+	return rewritePlaceholders(q.driver, sb.String()), args
 }
 
 // buildSelectPage monta o SELECT com LIMIT/OFFSET fixos, ignorando q.limit e q.offset.
 func (q *Query[T]) buildSelectPage(pageSize, offset int) (string, []any) {
 	var sb strings.Builder
-	sb.WriteString("SELECT ")
-	if len(q.cols) > 0 {
-		for i, c := range q.cols {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-			sb.WriteString(c)
-		}
-	} else {
-		sb.WriteByte('*')
-	}
-	sb.WriteString(" FROM ")
-	sb.WriteString(qualifiedTable(q.db, q.meta.Table))
-
-	if len(q.where) > 0 {
-		sb.WriteString(" WHERE ")
-		for i, w := range q.where {
-			if i > 0 {
-				sb.WriteString(" AND ")
-			}
-			sb.WriteString(w)
-		}
-	}
-	if q.orderBy != "" {
-		sb.WriteString(" ORDER BY ")
-		sb.WriteString(q.orderBy)
-	}
+	q.writeSelectHead(&sb)
+	q.writeWhere(&sb)
+	q.writeOrderBy(&sb)
 	sb.WriteString(" LIMIT ? OFFSET ?")
 	args := append(make([]any, 0, len(q.args)+2), q.args...)
 	args = append(args, pageSize, offset)
-	return rewritePlaceholders(q.db.Driver, sb.String()), args
+	return rewritePlaceholders(q.driver, sb.String()), args
 }
+
+// compile-time: *database.DB e *database.Tx satisfazem sqlExec.
+var (
+	_ sqlExec      = (*database.DB)(nil)
+	_ sqlExec      = (*database.Tx)(nil)
+	_ stmtPreparer = (*database.DB)(nil)
+)

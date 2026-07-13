@@ -79,13 +79,19 @@ func detectLoginColumn() string {
 }
 
 // authToSnake converte CamelCase → snake_case sem importar o pacote orm.
+// Espelho de orm.toSnake, com tratamento de acrônimos (UserID → user_id).
 func authToSnake(s string) string {
 	var b strings.Builder
-	for i, r := range s {
-		if unicode.IsUpper(r) && i > 0 {
-			b.WriteByte('_')
+	rs := []rune(s)
+	for i, r := range rs {
+		if unicode.IsUpper(r) {
+			if i > 0 && (!unicode.IsUpper(rs[i-1]) || (i+1 < len(rs) && unicode.IsLower(rs[i+1]))) {
+				b.WriteByte('_')
+			}
+			b.WriteRune(unicode.ToLower(r))
+		} else {
+			b.WriteRune(r)
 		}
-		b.WriteRune(unicode.ToLower(r))
 	}
 	return b.String()
 }

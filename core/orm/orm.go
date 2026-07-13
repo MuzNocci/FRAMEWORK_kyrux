@@ -34,10 +34,7 @@ import "kyrux/core/database"
 //	users, err := orm.From[User]("default").Where("active = ?", true).All()
 //	logs,  err := orm.From[Log]("analytics").Limit(100).All()
 func From[T any](connName string) *Query[T] {
-	return &Query[T]{
-		db:   DB(connName),
-		meta: metaOf[T](),
-	}
+	return FromDB[T](DB(connName))
 }
 
 // FromDB inicia um Query builder usando uma conexão explícita.
@@ -46,7 +43,25 @@ func From[T any](connName string) *Query[T] {
 //	users, err := orm.FromDB[User](db).Where("active = ?", true).All()
 func FromDB[T any](db *database.DB) *Query[T] {
 	return &Query[T]{
-		db:   db,
-		meta: metaOf[T](),
+		exec:   db,
+		driver: db.Driver,
+		schema: db.Schema,
+		meta:   metaOf[T](),
+	}
+}
+
+// FromTx inicia um Query builder dentro de uma transação (database.Tx) —
+// todas as operações do builder participam do commit/rollback:
+//
+//	err := fw.DB.Use().Transaction(func(tx *database.Tx) error {
+//	    if err := orm.CreateTx(tx, &pedido); err != nil { return err }
+//	    return orm.FromTx[Saldo](tx).Where("id = ?", 1).Update(map[string]any{"valor": v})
+//	})
+func FromTx[T any](tx *database.Tx) *Query[T] {
+	return &Query[T]{
+		exec:   tx,
+		driver: tx.Driver,
+		schema: tx.Schema,
+		meta:   metaOf[T](),
 	}
 }
