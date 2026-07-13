@@ -19,8 +19,15 @@ func gid() uint64 {
 	return id
 }
 
-func setCurrentCtx(ctx *router.Context) { goroutineCtxStore.Store(gid(), ctx) }
-func clearCurrentCtx()                  { goroutineCtxStore.Delete(gid()) }
+// setCurrentCtx devolve o id da goroutine para que clearCurrentCtx o reuse —
+// gid() custa ~2 µs (runtime.Stack); computar uma vez por render, não duas.
+func setCurrentCtx(ctx *router.Context) uint64 {
+	id := gid()
+	goroutineCtxStore.Store(id, ctx)
+	return id
+}
+
+func clearCurrentCtx(id uint64) { goroutineCtxStore.Delete(id) }
 
 // GetCurrentCtx retorna o *router.Context da goroutine em execução.
 // Usado por funções do FuncMap que precisam de dados por request.

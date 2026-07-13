@@ -21,7 +21,8 @@ const (
 	fieldName  = "kyrux_csrf_token"
 	headerName = "X-CSRF-Token"
 	tokenLen   = 32
-	contextKey = "csrf_token"
+	rawKey     = "csrf_raw"   // token bruto (cookie) — colocado pelo middleware
+	contextKey = "csrf_token" // token assinado — computado lazy e cacheado por request
 )
 
 var unsafeMethods = map[string]bool{
@@ -64,6 +65,25 @@ func secretKey() []byte {
 	panic("csrf: SECRET_KEY não configurado — defina no .env ou chame csrf.SetSecret() no bootstrap")
 }
 
+// TokenFor devolve o token CSRF assinado da requisição atual — o mesmo valor
+// que {{ csrf_token }} injeta no form. Útil para expor o token em respostas
+// JSON. A assinatura é computada lazy e cacheada no ctx (uma vez por request).
+func TokenFor(ctx *router.Context) string {
+	if v, ok := ctx.Get(contextKey); ok {
+		if s, _ := v.(string); s != "" {
+			return s
+		}
+	}
+	v, _ := ctx.Get(rawKey)
+	raw, _ := v.(string)
+	if raw == "" {
+		return ""
+	}
+	signed := sign(raw)
+	ctx.Set(contextKey, signed)
+	return signed
+}
+
 // RegisterFuncs registra {{ csrf_token }} no FuncMap global de templates.
 // Deve ser chamado no bootstrap antes do primeiro render.
 func RegisterFuncs() {
@@ -72,20 +92,25 @@ func RegisterFuncs() {
 		if ctx == nil {
 			return ""
 		}
-		v, _ := ctx.Get(contextKey)
-		signed, _ := v.(string)
+		signed := TokenFor(ctx)
+		if signed == "" {
+			return ""
+		}
 		return template.HTML(`<input type="hidden" name="` + fieldName + `" value="` + signed + `">`)
 	})
 }
 
 func Middleware(next router.HandlerFunc) router.HandlerFunc {
 	return func(ctx *router.Context) {
-		raw, signed, err := getOrCreate(ctx)
+		raw, err := getOrCreate(ctx)
 		if err != nil {
 			http.Error(ctx.Writer, "500 Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		ctx.Set(contextKey, signed)
+		// Assinatura lazy: o HMAC (~650ns + 10 allocs) só roda na validação
+		// de métodos inseguros ou quando {{ csrf_token }}/TokenFor é usado.
+		// GETs de JSON/estáticos não pagam a criptografia.
+		ctx.Set(rawKey, raw)
 
 		if unsafeMethods[ctx.Request.Method] && !isExempt(ctx.Request.URL.Path) {
 			submitted := ctx.Request.FormValue(fieldName)
@@ -102,8 +127,8 @@ func Middleware(next router.HandlerFunc) router.HandlerFunc {
 	}
 }
 
-// getOrCreate devolve o token bruto (armazenado no cookie), o token assinado (para o form) e um erro.
-func getOrCreate(ctx *router.Context) (raw, signed string, err error) {
+// getOrCreate devolve o token bruto armazenado no cookie, criando-o se necessário.
+func getOrCreate(ctx *router.Context) (raw string, err error) {
 	if c, cerr := ctx.Request.Cookie(cookieName); cerr == nil && c.Value != "" {
 		raw = c.Value
 	} else {
@@ -123,7 +148,6 @@ func getOrCreate(ctx *router.Context) (raw, signed string, err error) {
 			Path:     "/",
 		})
 	}
-	signed = sign(raw)
 	return
 }
 

@@ -219,7 +219,11 @@ func clientIP(remoteAddr string) string {
 func MaxBodySize(maxBytes int64) router.MiddlewareFunc {
 	return func(next router.HandlerFunc) router.HandlerFunc {
 		return func(ctx *router.Context) {
-			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, maxBytes)
+			// Sem corpo (GET/HEAD típicos) não há o que limitar — evita
+			// alocar o wrapper na maioria das requests SSR.
+			if ctx.Request.Body != nil && ctx.Request.Body != http.NoBody {
+				ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, maxBytes)
+			}
 			next(ctx)
 		}
 	}

@@ -91,8 +91,12 @@ func (c *Context) JSON(status int, v any) {
 	jsonPool.Put(je)
 }
 
+// HTML escreve a resposta com Content-Type e Content-Length — o tamanho
+// explícito evita chunked transfer encoding em corpos grandes (+throughput).
 func (c *Context) HTML(status int, body string) {
-	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	h := c.Writer.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Length", strconv.Itoa(len(body)))
 	c.Writer.WriteHeader(status)
 	io.WriteString(c.Writer, body)
 }

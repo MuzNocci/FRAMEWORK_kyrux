@@ -58,7 +58,10 @@ Campo de login definido via tag `kyrux:"login"` no model — imutável após o p
 Argon2id para senhas, AES-256-GCM para campos sensíveis, HMAC-SHA256 para assinaturas.
 
 ### ORM
-Query builder fluente com generics, hash/encrypt automático, paginação, multi-tenant por schema.
+Query builder fluente com generics: Where/OrWhere/WhereIn, OrderBy múltiplo, Distinct,
+Exists/Count/Sum/Avg/Min/Max, First/Last, GetOrCreate/UpdateOrCreate, CreateAll (bulk),
+Each (streaming), hash/encrypt automático, autonow, paginação (com e sem COUNT),
+transações (`FromTx`/`CreateTx`), multi-tenant por schema.
 
 ### Database
 Wrapper de `database/sql` com pool configurado, multi-conexão nomeada, transações e schema por conexão.
@@ -68,10 +71,14 @@ Arquivos `.sql` numerados em `database/migrations/` com seções `up` e `-- down
 Rastreamento via tabela `kyrux_migrations`. `removemigration all` executa o down antes de remover o registro.
 
 ### Cache
-Cache em memória com TTL e GC automático.
+Cache em memória com TTL, GC automático e teto de entradas.
 
 ### EventBus
-Pub/sub assíncrono em goroutines separadas.
+Pub/sub assíncrono em goroutines separadas (fire-and-forget, com recover).
+
+### Queue
+Fila de tarefas em background: pool de workers, retry com backoff e drenagem
+no shutdown. Diferente do EventBus, cada tarefa é processada por UM worker.
 
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
@@ -127,8 +134,14 @@ DB_DSN=postgres://user:pass@localhost:5432/db?sslmode=disable
 
 # ── Cache ─────────────────────────────────────────────────────────
 CACHE_ENABLED=false
-CACHE_DRIVER=memory
+CACHE_DRIVER=memory          # memory | redis (roadmap)
 CACHE_ADDR=localhost:6379
+
+# ── Queue (fila de tarefas em background) ─────────────────────────
+QUEUE_ENABLED=false
+QUEUE_DRIVER=memory          # memory | redis (roadmap)
+QUEUE_ADDR=localhost:6379
+QUEUE_WORKERS=4
 
 # ── Segurança (obrigatórios em production) ────────────────────────
 SECRET_KEY=sua-chave-secreta-forte-aqui     # mínimo 32 chars
@@ -144,6 +157,7 @@ FIELD_ENCRYPTION_KEY=sua-chave-de-criptografia-forte-aqui
 
 # ── Runtime (opcional) ────────────────────────────────────────────
 RUNTIME_GOGC=75              # GC percentage (padrão Go: 100)
+RUNTIME_GOMEMLIMIT=512MiB    # teto de memória do GC (KiB/MiB/GiB ou bytes)
 ```
 
 > Em produção: `SECRET_KEY`, `PASSWORD_PEPPER`, `FIELD_ENCRYPTION_KEY` e `ALLOWED_HOSTS` são **obrigatórios**
@@ -179,6 +193,8 @@ type Cliente struct {
 | `hash` | Auto-hash Argon2id+pepper na escrita (Create/Update). Nunca revertido. |
 | `encrypt` | Auto-cifra AES-256-GCM na escrita, decifra na leitura. Requer `FIELD_ENCRYPTION_KEY`. |
 | `login` | Marca o campo de login do `auth.User`. Apenas um campo. Imutável após o primeiro migrate. |
+| `autonow` | `CURRENT_TIMESTAMP` automático em todo Update (ex: `updated_at`). Também preenche no INSERT se zerado. |
+| `fk:tabela` | `REFERENCES tabela(id)` + índice na migration. A tabela referenciada deve existir antes. |
 
 
 ## DRIVERS DE BANCO SUPORTADOS

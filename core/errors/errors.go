@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"kyrux/core/environment"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,9 +34,15 @@ func SetDebug(v bool) { debugMode.Store(v) }
 
 var atomicAppName, atomicVersion atomic.Value
 
+// pageCache guarda as páginas de erro de produção já renderizadas, por código
+// HTTP — a página é estática por código (AppName/Version são fixos no boot).
+// Sem o cache, um flood de 404 custa ~8× uma rota válida (re-render por hit).
+var pageCache sync.Map // int → []byte
+
 func SetApp(name, version string) {
 	atomicAppName.Store(name)
 	atomicVersion.Store(version)
+	pageCache.Clear() // invalida páginas renderizadas com dados antigos
 }
 
 func getAppName() string {
@@ -156,6 +163,25 @@ func RenderPanic(w http.ResponseWriter, r *http.Request, recovered any, stack []
 }
 
 func renderDefault(w http.ResponseWriter, code int) {
+	body, ok := cachedPage(code)
+	if !ok {
+		http.Error(w, http.StatusText(code), code)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	h.Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(code)
+	w.Write(body)
+}
+
+// cachedPage devolve a página de erro do código, renderizando-a na primeira
+// utilização e servindo os bytes prontos nas seguintes.
+func cachedPage(code int) ([]byte, bool) {
+	if b, ok := pageCache.Load(code); ok {
+		return b.([]byte), true
+	}
 	defs, ok := catalog[code]
 	if !ok {
 		defs = [2]string{http.StatusText(code), "Ocorreu um erro inesperado."}
@@ -169,14 +195,11 @@ func renderDefault(w http.ResponseWriter, code int) {
 	}
 	var buf bytes.Buffer
 	if err := tpl.Execute(&buf, d); err != nil {
-		http.Error(w, http.StatusText(code), code)
-		return
+		return nil, false
 	}
-	h := w.Header()
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(code)
-	w.Write(buf.Bytes())
+	body := bytes.Clone(buf.Bytes())
+	pageCache.Store(code, body)
+	return body, true
 }
 
 func renderDebugHTTP(w http.ResponseWriter, r *http.Request, code int) {

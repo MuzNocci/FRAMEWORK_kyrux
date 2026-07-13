@@ -245,3 +245,260 @@ O `Context` volta ao pool ao fim do request ([router.go:100-110](core/router/rou
 | 14 | P2, P5, P6, P7, P8 e docs | Baixo/Médio | Variado |
 
 Os itens 1-4 e 7-8 cabem numa única rodada de correções sem tocar em nenhuma API pública; o restante pode ser distribuído nas próximas iterações do Alpha.
+
+---
+
+# Rodada 2 — Desempenho máximo da linguagem (2026-07-13)
+
+> **STATUS: R1–R8 implementados.** Resultados medidos após implementação:
+> CSRF em GET caiu de 1075 ns/15 allocs para **440 ns/5 allocs** (2,4×);
+> 404 caiu de 12,1 µs/58 allocs para **2,5 µs/20 allocs** (4,9×).
+>
+> Segunda passada focada exclusivamente em desempenho, guiada por **profiling
+> real** (`pprof` de CPU e alocações sobre os benchmarks do repositório), não
+> por intuição. Nenhuma proposta abaixo muda a API pública.
+>
+> Contexto importante do profiling: ~40% das alocações medidas nos benchmarks
+> vêm do próprio harness (`httptest.NewRecorder` + `Header.Clone`), não do
+> framework — o router real está mais enxuto do que os números brutos sugerem.
+> Os custos reais estão no que roda **em toda request do stack de produção**.
+
+## 🔴 R1. CSRF assina com HMAC em TODA request — o maior custo evitável do hot path
+
+Medido no hardware do projeto:
+
+```
+BenchmarkSign            656 ns/op    752 B/op    10 allocs/op
+BenchmarkMiddlewareGET  1075 ns/op   1304 B/op    15 allocs/op
+(rota estática completa ~1459 ns/op, 15 allocs — o CSRF quase DOBRA o hot path)
+```
+
+`csrf.Middleware` chama `getOrCreate` → `sign()` (HMAC-SHA256 + hex) em **toda
+request**, inclusive GETs de JSON/API que nunca renderizam formulário
+([csrf.go:66](core/security/csrf/csrf.go#L66)). O token assinado só é necessário em
+dois momentos: na validação de método inseguro e quando `{{ csrf_token }}` é
+usado num template.
+
+**Proposta — assinatura lazy (zero mudança de API):** o middleware guarda
+apenas o token bruto no ctx; `sign()` roda só (a) na validação de
+POST/PUT/PATCH/DELETE e (b) dentro do template func `{{ csrf_token }}` na
+primeira utilização. GETs estáticos/JSON deixam de pagar HMAC + 10 allocs.
+Bônus: rotas em `csrf.Exempt` também escapam da assinatura.
+
+## 🟠 R2. Página 404/erro é re-renderizada a cada hit (12 µs — 8× o custo de uma rota)
+
+```
+BenchmarkRoute404   12133 ns/op   13781 B/op   58 allocs/op
+```
+
+`renderDefault` executa o template de erro a cada requisição
+([errors.go:158](core/errors/errors.go#L158)), mas a página é **estática por código
+HTTP** (só muda AppName/Version, fixos no boot). Um flood de 404 custa 8× uma
+rota válida — é superfície de DoS barato além de desperdício.
+
+**Proposta:** cachear os bytes renderizados por código HTTP na primeira
+utilização (`sync.Map` code→[]byte). 404 passa a custar como rota estática.
+
+## 🟠 R3. `gid()` custa ~2 µs por chamada — e o render chama 2+N vezes
+
+```
+BenchmarkGid   1947 ns/op   32 B/op   1 alloc/op
+```
+
+`runtime.Stack` é caro. Cada `Render` faz `setCurrentCtx` + `clearCurrentCtx`
+(2 chamadas) + 1 por template func que usa contexto (`{{ csrf_token }}`) —
+~4-6 µs por página, 10-30% do custo típico de um template pequeno.
+
+**Propostas (em ordem de simplicidade):**
+1. Reaproveitar o gid: `setCurrentCtx` retorna o id e `clearCurrentCtx(id)` o
+   reusa — corta 1 chamada (~2 µs) sem nenhuma mudança estrutural.
+2. (Opcional, ganho ~100×) trocar por `github.com/petermattis/goid` (getg em
+   assembly, ~1 ns) — dependência minúscula, mas é uma dependência.
+
+## 🟡 R4. Injeção do live.js escaneia a página inteira para achar `</body>`
+
+`bytes.Index(raw, "</body>")` percorre o HTML do início
+([render.go](core/render/render.go)) — mas `</body>` está no **fim** da página.
+`bytes.LastIndex` encontra em poucos bytes. Ganho proporcional ao tamanho da
+página (~µs em páginas grandes), mudança de uma linha.
+
+## 🟡 R5. `ctx.HTML` sem Content-Length
+
+O próprio USE.md registra que o Content-Length no JSON rendeu **+13% de
+throughput** (elimina chunked encoding). `ctx.HTML`
+([context.go](core/router/context.go)) não o define — corpos maiores que o buffer
+do net/http caem em chunked. Uma linha: `strconv.Itoa(len(body))`.
+
+## 🟡 R6. `MaxBodySize` embrulha o Body até de GETs sem corpo
+
+`http.MaxBytesReader` aloca um wrapper por request
+([middleware.go](core/security/middleware/middleware.go)), inclusive quando
+`Body == http.NoBody`. Pular o wrap nesse caso economiza 1 alloc na maioria
+das requests (GETs dominam tráfego SSR).
+
+## 🟡 R7. `scanRows` faz lookup de map por coluna POR LINHA
+
+Em result sets grandes, o `colToField[col]` roda linhas×colunas vezes
+([scanner.go](core/orm/scanner.go)). Pré-computar um plano `[]*Field` alinhado às
+colunas **uma vez antes do loop** troca N×M lookups de map por indexação de
+slice. Ganho relevante em `All()` de centenas/milhares de linhas.
+
+## 🟡 R8. `RUNTIME_GOMEMLIMIT` ausente
+
+O runtime moderno do Go controla GC melhor com `GOMEMLIMIT` (evita OOM e
+reduz ciclos de GC sob pressão). O bootstrap já suporta `RUNTIME_GOGC`
+([bootstrap.go](core/bootstrap/bootstrap.go)) — adicionar o equivalente
+`RUNTIME_GOMEMLIMIT` (ex: `512MiB`) são ~6 linhas, invisível para o dev.
+
+## ⚪ Consciente e descartado (custo > benefício para a filosofia do Kyrux)
+
+- **JSON de terceiros** (goccy/sonic, 2-4× mais rápido): dependência pesada
+  com unsafe/assembly — contra a simplicidade. stdlib continua o default certo.
+- **Cache de arquivos estáticos em memória**: em produção o proxy reverso
+  (nginx/Caddy) já resolve com sendfile; complexidade não se paga.
+- **Worker pool no EventBus**: goroutine por evento é o modelo mais simples e
+  aguenta dezenas de milhares de eventos/s; um pool só se justificaria com
+  backpressure real.
+- **Radix tree própria no router**: o ServeMux do Go 1.22+ já é competitivo e
+  ganha otimizações do time do Go a cada release — manter.
+
+## Priorização da rodada 2
+
+| # | Item | Ganho estimado | Esforço |
+|---|------|----------------|---------|
+| 1 | R1 — CSRF lazy | ~1,1 µs + 15 allocs por request segura (~40% do hot path µbench) | Baixo |
+| 2 | R2 — cache de páginas de erro | 404 de 12 µs → ~1,5 µs (anti-DoS) | Baixo |
+| 3 | R5 — Content-Length no HTML | até +13% em respostas HTML diretas | Trivial |
+| 4 | R4 — LastIndex no `</body>` | ~µs por página grande | Trivial |
+| 5 | R3 — gid reaproveitado | ~2 µs por render | Baixo |
+| 6 | R6 — skip MaxBytesReader sem corpo | 1 alloc/request | Trivial |
+| 7 | R7 — plano de colunas no scanRows | grande em result sets volumosos | Baixo |
+| 8 | R8 — RUNTIME_GOMEMLIMIT | estabilidade de GC | Trivial |
+
+---
+
+# Rodada 3 — Paridade do ORM com o Django (2026-07-13)
+
+> **STATUS: G1, G4, G5, G6 e G7 implementados por completo** (transações
+> FromTx/CreateTx, OrderBy múltiplo, WhereIn, OrWhere, Exists, Sum/Avg/Min/Max,
+> Last, Distinct, GetOrCreate, UpdateOrCreate, CreateAll, Each e autonow) +
+> G2 parcial (tag `fk:` gera REFERENCES + índice nas migrations) + correção
+> do toSnake para acrônimos (UserID → user_id). Restam como roadmap:
+> G2-consultas (JOIN/prefetch no builder) e G3 (autodetector de ALTER).
+> Extra desta rodada: sistema de **Queue** (fila de tarefas com workers,
+> retry e drenagem no shutdown — bloco QUEUE_* no .env) e parser de blocos
+> do .env tolerante à ordem das chaves.
+>
+> Análise de completude: o ORM do Kyrux está completo e funciona "igual ao
+> Django"? Resposta curta: **a filosofia é fiel, mas a superfície coberta é
+> ~40% do Django ORM** — é um query builder single-table excelente e seguro,
+> não (ainda) um ORM relacional. Nada do que falta exige sacrificar
+> performance; vários itens da lista a MELHORAM.
+
+## O que já é Django-like (e em alguns pontos, melhor)
+
+| Django | Kyrux | Nota |
+|---|---|---|
+| Models como classes + campos | Structs + tags `kyrux` | ✅ equivalente idiomático |
+| `makemigrations` / `migrate` | `makemigrations` / `migrate` | ✅ com up/down em SQL revisável |
+| `objects.filter(...)` | `Where("...", args)` | ✅ AND encadeado |
+| `values()` / `only()` | `Select(cols...)` | ✅ parcial |
+| `order_by()` | `OrderBy(col)` | ⚠️ só UMA coluna (ver G4) |
+| `count()` / `first()` | `Count()` / `First()` | ✅ |
+| `Paginator` | `Paginate` / `PaginateNoCount` | ✅ melhor (NoCount não existe no Django) |
+| `update()` / `delete()` com guarda | `Update(map)` / `Delete()` exigem WHERE | ✅ mais seguro que o Django |
+| `using("db")` | `From[T]("nome")` / `fw.DB.Use()` | ✅ multi-db |
+| — | Schema por conexão (multi-tenant) | ✅ Django não tem nativo |
+| `User` + auth | `auth.User` + Login/JWT | ✅ |
+| — | Tags `hash` / `encrypt` automáticas | ✅ Django precisa de libs externas |
+| `signals` | EventBus (manual) | ⚠️ padrão existe, não é automático |
+
+## Lacunas — em ordem de impacto funcional
+
+### G1. ORM não roda dentro de transação (crítico)
+
+`db.Transaction(fn)` entrega um `*sql.Tx` cru — mas `orm.Create`, `Query.All`,
+`Update` etc. só aceitam `*database.DB`. **Não existe como usar o ORM (com
+hash/encrypt automáticos) atomicamente.** O equivalente do `transaction.atomic()`
+do Django é impossível hoje.
+
+**Proposta:** interface interna `executor` (satisfeita por `*sql.DB` e `*sql.Tx`)
++ `orm.FromTx[T](tx)` / `Create` aceitando ambos. Perf: neutra (mesmas queries).
+
+### G2. Relações não existem (ForeignKey / select_related / prefetch_related)
+
+Nem a tag de FK na migration, nem JOIN no builder, nem carregamento de
+relacionados. É a maior distância do Django. Caminho incremental sem perder
+simplicidade nem performance:
+1. Tag `kyrux:"fk:users"` → `REFERENCES` + índice na migration (só DDL);
+2. `Join("posts.user_id = users.id")` validado no builder (opt-in, explícito);
+3. `prefetch` manual documentado (2 queries + map em Go — é o que o
+   prefetch_related faz por baixo, sem mágica).
+
+### G3. Migrations são create-only (sem autodetector de mudanças)
+
+`makemigrations` só gera `CREATE TABLE` para tabelas novas
+(core/cli/makemigrations.go) — adicionar/remover/renomear um campo num model
+existente não gera `ALTER TABLE`; o dev precisa escrever o SQL à mão. O
+autodetector do Django é a referência. Esforço médio: comparar AST dos models
+com o schema das migrations anteriores e emitir `ALTER TABLE ADD/DROP COLUMN`.
+
+### G4. `OrderBy` aceita só uma coluna
+
+`OrderBy("criado_em DESC, id ASC")` é **rejeitado** pelo validador
+(core/orm/query.go — `reIdent` casa uma coluna só). Django: `order_by(*fields)`.
+Fix trivial: `OrderBy(cols ...string)` validando cada item. Perf: zero.
+
+### G5. `IN` com slice não funciona
+
+`Where("id IN (?)", []int64{1,2,3})` falha no driver — placeholders não
+expandem slices (dor clássica de query builder). Fix: helper `WhereIn(col,
+slice)` que expande `?,?,?` — trivial e seguro (col validada por `validIdent`).
+
+### G6. Só AND — sem OR/NOT (Q objects)
+
+`Where` encadeia com AND fixo. Um `OrWhere(cond, args)` ou `WhereGroup` cobre
+80% dos casos do `Q(...) | Q(...)` sem introduzir a complexidade dos Q objects.
+
+### G7. Utilitários de consulta ausentes (todos triviais, perf-neutros ou positivos)
+
+| Django | Proposta Kyrux | Perf |
+|---|---|---|
+| `exists()` | `Exists()` → `SELECT 1 ... LIMIT 1` | melhor que Count |
+| `aggregate(Sum/Avg/Min/Max)` | `Sum(col)`, `Avg(col)`, `Min`, `Max` | neutra |
+| `last()` | `Last()` (inverte OrderBy) | neutra |
+| `distinct()` | `Distinct()` | neutra |
+| `get_or_create` / `update_or_create` | `GetOrCreate` / `UpdateOrCreate` | neutra |
+| `bulk_create` | `CreateAll([]T)` — um INSERT multi-VALUES | **melhora** (1 round-trip p/ N linhas) |
+| `iterator()` | `Each(fn)` — streaming sem carregar tudo | **melhora** (memória O(1) em tabelas grandes) |
+| `auto_now` | tag `kyrux:"autonow"` no UpdatedAt | neutra |
+
+### G8. Fora de escopo consciente (não fazer)
+
+- **Lookups mágicos** (`nome__icontains=...`): SQL explícito com `?` é mais
+  claro em Go e mais rápido (sem parsing de lookup em runtime).
+- **Lazy QuerySets com cache de resultados**: fonte clássica de surpresas de
+  performance no Django (N+1 invisível); o modelo explícito do Kyrux é melhor.
+- **Model.save() com estado sujo**: exigiria rastrear mudanças por instância
+  (custo em memória/reflection por objeto). `Update(map)` explícito é superior.
+- **Validação/choices/full_clean**: pertence à camada de forms, não ao ORM.
+
+## Priorização da rodada 3
+
+| # | Item | Impacto | Esforço | Perf |
+|---|------|---------|---------|------|
+| 1 | G1 — ORM em transações | Crítico (atomicidade) | Médio | neutra |
+| 2 | G4 — OrderBy múltiplo | Bug-like | Trivial | zero |
+| 3 | G5 — WhereIn | Dor frequente | Baixo | zero |
+| 4 | G7 — Exists/aggregates/CreateAll/Each | Alto (DX) | Baixo | positiva |
+| 5 | G6 — OrWhere | Médio | Baixo | zero |
+| 6 | G7 — GetOrCreate/autonow | Médio | Baixo | neutra |
+| 7 | G3 — ALTER no makemigrations | Alto (DX) | Médio/Alto | n/a |
+| 8 | G2 — FK/Join/prefetch | Alto (é "o" gap) | Alto | neutra se explícito |
+
+**Veredito:** para o slogan "Django em Go" se sustentar, G1 (transações) e G4/G5
+(bug-like) deveriam entrar já; G2 (relações) e G3 (autodetector) são o roadmap
+que separa "query builder ótimo" de "ORM completo". A boa notícia: o desenho
+atual (generics + reflection cacheada + SQL explícito) comporta tudo isso sem
+custo no hot path — e itens como `CreateAll` e `Each` deixam o framework mais
+rápido, não mais lento.

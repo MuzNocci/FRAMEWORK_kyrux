@@ -206,8 +206,8 @@ func (r *Renderer) With(processors ...ContextProcessor) *Renderer {
 }
 
 func (r *Renderer) Render(ctx *router.Context, template string, data map[string]any) {
-	setCurrentCtx(ctx)
-	defer clearCurrentCtx()
+	gid := setCurrentCtx(ctx)
+	defer clearCurrentCtx(gid)
 
 	merged := mergedPool.Get().(map[string]any)
 	for k := range merged {
@@ -293,7 +293,9 @@ func (e *Engine) Render(w http.ResponseWriter, name string, data any) error {
 	}
 
 	raw := buf.Bytes()
-	idx := bytes.Index(raw, []byte("</body>"))
+	// LastIndex: </body> fica no fim da página — a busca reversa encontra
+	// em poucos bytes em vez de escanear o HTML inteiro.
+	idx := bytes.LastIndex(raw, []byte("</body>"))
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 

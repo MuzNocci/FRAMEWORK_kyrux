@@ -12,6 +12,7 @@ import (
 	"kyrux/core/events"
 	"kyrux/core/orm"
 	"kyrux/core/hotreload"
+	"kyrux/core/queue"
 	"kyrux/core/realtime"
 	"kyrux/core/render"
 	"kyrux/core/router"
@@ -29,6 +30,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -40,6 +42,7 @@ type Framework struct {
 	Realtime *realtime.Hub
 	DB       *database.Manager
 	Cache    *cache.Cache
+	Queue    *queue.Queue
 	Auth     *auth.Authenticator
 	Sessions *session.Store
 }
@@ -111,6 +114,16 @@ func Init(envPath string) (*Framework, error) {
 		log.Println("bootstrap: cache disabled (CACHE_ENABLED=false)")
 	}
 
+	if cfg.Queue.Enabled {
+		if cfg.Queue.Driver != "" && cfg.Queue.Driver != "memory" {
+			log.Printf("bootstrap: QUEUE_DRIVER=%q ainda não suportado — usando 'memory' (redis está no roadmap)\n", cfg.Queue.Driver)
+		}
+		f.Queue = queue.New(cfg.Queue.Workers, 0)
+		log.Printf("bootstrap: queue enabled (%d workers)\n", cfg.Queue.Workers)
+	} else {
+		log.Println("bootstrap: queue disabled (QUEUE_ENABLED=false)")
+	}
+
 	for _, appName := range cfg.InstalledApps {
 		if fn, ok := registry[appName]; ok {
 			fn(r, f)
@@ -156,6 +169,31 @@ func Init(envPath string) (*Framework, error) {
 	return f, nil
 }
 
+// parseMemLimit converte "512MiB", "2GiB", "268435456" (bytes) em int64.
+// Os sufixos maiores são testados primeiro — "KiB" também termina em "B".
+func parseMemLimit(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	mult := int64(1)
+	suffixes := []struct {
+		suffix string
+		mult   int64
+	}{
+		{"KiB", 1 << 10}, {"MiB", 1 << 20}, {"GiB", 1 << 30}, {"B", 1},
+	}
+	for _, sf := range suffixes {
+		if strings.HasSuffix(s, sf.suffix) {
+			mult = sf.mult
+			s = strings.TrimSuffix(s, sf.suffix)
+			break
+		}
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("valor inválido")
+	}
+	return n * mult, nil
+}
+
 func (f *Framework) Run() error {
 	// GOMAXPROCS só é alterado quando SERVER_WORKERS foi definido
 	// explicitamente — o default do runtime Go (todos os CPUs) é o mais
@@ -168,6 +206,17 @@ func (f *Framework) Run() error {
 		if n, err := strconv.Atoi(gc); err == nil {
 			debug.SetGCPercent(n)
 			log.Printf("bootstrap: GOGC=%d\n", n)
+		}
+	}
+
+	// GOMEMLIMIT dá ao GC um teto de memória — reduz ciclos sob pressão e
+	// evita OOM em containers. Aceita bytes ou sufixos KiB/MiB/GiB.
+	if ml := environment.Get("RUNTIME_GOMEMLIMIT"); ml != "" {
+		if n, err := parseMemLimit(ml); err == nil {
+			debug.SetMemoryLimit(n)
+			log.Printf("bootstrap: GOMEMLIMIT=%s\n", ml)
+		} else {
+			log.Printf("bootstrap: RUNTIME_GOMEMLIMIT inválido (%q): %v\n", ml, err)
 		}
 	}
 
@@ -200,6 +249,14 @@ func (f *Framework) Run() error {
 		defer cancel()
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Printf("bootstrap: shutdown: %v\n", err)
+		}
+		// Drena a fila de tarefas antes de encerrar — trabalho enfileirado
+		// não se perde num deploy.
+		if f.Queue != nil {
+			f.Queue.Close()
+		}
+		if f.Cache != nil {
+			f.Cache.Close()
 		}
 		fmt.Printf("[%s] see you again.\n", time.Now().Format("15:04:05"))
 		close(done)

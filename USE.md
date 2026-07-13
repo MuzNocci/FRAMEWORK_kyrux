@@ -769,14 +769,26 @@ db := fw.DB.Use("tenant_xyz")
 
 ### Transações
 
+O callback recebe `*database.Tx` — commit se retornar `nil`, rollback caso
+contrário (inclusive em panic). **O ORM funciona dentro da transação** via
+`orm.FromTx` e `orm.CreateTx` (equivalente ao `transaction.atomic()` do Django):
+
 ```go
-err := fw.DB.Use().Transaction(func(tx *sql.Tx) error {
-    _, err := tx.Exec("INSERT INTO posts (titulo) VALUES ($1)", "Novo post")
-    if err != nil {
+import "kyrux/core/database"
+
+err := fw.DB.Use().Transaction(func(tx *database.Tx) error {
+    pedido := Pedido{Total: 99.90}
+    if err := orm.CreateTx(tx, &pedido); err != nil {
         return err // rollback automático
     }
-    _, err = tx.Exec("UPDATE stats SET total = total + 1")
-    return err // commit se nil
+    // SQL cru também funciona — tx embute *sql.Tx:
+    _, err := tx.Exec("UPDATE stats SET total = total + 1")
+    if err != nil {
+        return err
+    }
+    return orm.FromTx[Saldo](tx).
+        Where("id = ?", 1).
+        Update(map[string]any{"valor": 100}) // commit se nil
 })
 ```
 
@@ -893,6 +905,10 @@ O `removemigration all` executa as seguintes etapas em ordem:
 | `time.Time` | `TIMESTAMPTZ` | `DATETIME` |
 | campo `kyrux:"pk"` | `BIGSERIAL PRIMARY KEY` | `INTEGER PRIMARY KEY` |
 | campo `kyrux:"unique"` | `CREATE UNIQUE INDEX` | `CREATE UNIQUE INDEX` |
+| campo `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + `CREATE INDEX` | idem |
+
+> Para `fk:` a tabela referenciada precisa existir antes — declare o model
+> referenciado primeiro ou em uma migration anterior.
 
 Campos com ponteiro (`*string`, `*int`) são gerados sem `NOT NULL`. Campos não-ponteiro recebem `NOT NULL DEFAULT <zero>`.
 
@@ -1034,9 +1050,25 @@ publicados, err := orm.From[Post](db).
 | Método | Descrição |
 |---|---|
 | `Where(cond string, args ...any)` | Adiciona condição `AND`. Múltiplos `Where` são combinados com `AND`. |
-| `OrderBy(col string)` | Define `ORDER BY`. Ex: `"criado_em DESC"`. |
+| `OrWhere(cond string, args ...any)` | Adiciona condição `OR` (precedência: AND liga mais forte, como no SQL). |
+| `WhereIn(col string, vals ...any)` | `col IN (...)` com expansão de placeholders. Aceita slice: `WhereIn("id", ids)`. Lista vazia = nenhum resultado. |
+| `OrderBy(cols ...string)` | Define `ORDER BY` — múltiplas colunas: `OrderBy("criado_em DESC", "id ASC")`. |
+| `Distinct()` | `SELECT DISTINCT`. |
 | `Limit(n int)` | Máximo de linhas retornadas. |
 | `Offset(n int)` | Linhas a pular — use com `Limit` para paginação. |
+
+#### Métodos de execução
+
+| Método | Retorno | Descrição |
+|---|---|---|
+| `All()` | `[]T, error` | Todas as linhas do filtro. |
+| `Each(fn func(*T) error)` | `error` | Streaming linha a linha — memória O(1), para result sets grandes. |
+| `First()` / `Last()` | `*T, error` | Primeira/última linha (Last inverte a ordenação; sem OrderBy usa PK DESC). |
+| `Exists()` | `bool, error` | `SELECT 1 ... LIMIT 1` — mais barato que Count. |
+| `Count()` | `int64, error` | Número de linhas do filtro. |
+| `Sum/Avg/Min/Max(col)` | `float64, error` | Agregações numéricas (NULL → 0). |
+| `GetOrCreate(defaults *T)` | `*T, bool, error` | Busca; se não existir, insere `defaults` (created=true). Preencha `defaults` com os valores do filtro também. |
+| `UpdateOrCreate(values, defaults *T)` | `bool, error` | Atualiza as linhas do filtro; se nenhuma, insere `defaults`. |
 
 ### Criação
 
@@ -1055,6 +1087,15 @@ fmt.Println(post.ID) // preenchido com o ID gerado pelo banco
 
 PostgreSQL usa `RETURNING` internamente — sem round-trip extra.
 MySQL e SQLite usam `LastInsertId`.
+
+Para inserir muitas linhas, `CreateAll` faz um único INSERT multi-VALUES
+(chunks de 500 — equivalente ao `bulk_create` do Django):
+
+```go
+posts := []*Post{{Titulo: "a"}, {Titulo: "b"}, {Titulo: "c"}}
+err := orm.CreateAll(db, posts)
+// No PostgreSQL, posts[i].ID são preenchidos de volta.
+```
 
 ### Atualização
 
@@ -1513,6 +1554,44 @@ fw.Events.Unsubscribe("usuario.criado")
 
 > Handlers do EventBus rodam em goroutines separadas. Use sincronização se necessário.
 
+### Fila de tarefas (Queue)
+
+Cache, EventBus e Queue têm papéis distintos:
+
+| Componente | Papel | Garantia |
+|---|---|---|
+| `fw.Cache` | Armazenamento chave/valor com TTL | Leitura rápida; dados podem expirar |
+| `fw.Events` | Pub/sub fire-and-forget | TODOS os subscribers recebem; sem retry |
+| `fw.Queue` | Fila de tarefas em background | Cada tarefa processada por UM worker, com retry e drenagem no shutdown |
+
+Use a Queue para trabalho que não pode se perder num pico: e-mails, webhooks,
+processamento de mídia. Ative no `.env`:
+
+```env
+QUEUE_ENABLED=true
+QUEUE_DRIVER=memory   # memory | redis (roadmap — a API não mudará)
+QUEUE_WORKERS=4
+```
+
+Registre handlers no `Register` do app e enfileire nas views:
+
+```go
+// Register do app — antes de qualquer Enqueue:
+fw.Queue.Register("email.boasvindas", func(payload any) error {
+    return enviarEmail(payload.(string)) // erro ≠ nil → retry (3× com backoff)
+})
+
+// Na view:
+if err := fw.Queue.Enqueue("email.boasvindas", usuario.Email); err != nil {
+    // ErrQueueFull = backpressure explícito: decida entre 503, log ou retry
+    log.Printf("fila cheia: %v", err)
+}
+```
+
+No shutdown do servidor a fila é **drenada** antes do processo encerrar —
+tarefas enfileiradas não se perdem num deploy. Um panic num handler não
+derruba o worker (logado com stack trace).
+
 ---
 
 ## 17. Realtime (DOM sem JS)
@@ -1887,24 +1966,41 @@ ctx.Params                     // map[string]string
 ```go
 // Leitura
 orm.From[T](db).All()                          // ([]T, error)
+orm.From[T](db).Each(func(t *T) error {...})   // streaming, memória O(1)
 orm.From[T](db).First()                        // (*T, error) — sql.ErrNoRows se vazio
+orm.From[T](db).Last()                         // (*T, error) — ordenação invertida
+orm.From[T](db).Exists()                       // (bool, error)
 orm.From[T](db).Count()                        // (int64, error)
+orm.From[T](db).Sum("col")                     // (float64, error) — também Avg/Min/Max
 
 // Filtros encadeáveis (retornam *Query[T])
 .Where("col = ?", val)
-.OrderBy("col DESC")
+.OrWhere("col = ?", val)
+.WhereIn("id", ids)           // expande slice em placeholders
+.OrderBy("col DESC", "id")    // múltiplas colunas
+.Distinct()
 .Limit(n)
 .Offset(n)
 
 // Paginação
 orm.From[T](db).Where(...).OrderBy("id DESC").Paginate(page, 20)
+orm.From[T](db).OrderBy("id DESC").PaginateNoCount(page, 20) // sem COUNT(*)
 // → (Page[T], error)
 // Page[T]: Items, Total, Page, PageSize, TotalPages, HasNext, HasPrev
 
 // Escrita
 orm.Create(db, &model)                         // error — preenche PK
+orm.CreateAll(db, []*T{...})                   // bulk: um INSERT multi-VALUES
 orm.From[T](db).Where(...).Update(map[string]any{...}) // error
 orm.From[T](db).Where(...).Delete()            // error
+orm.From[T](db).Where(...).GetOrCreate(&defaults)      // (*T, created, error)
+orm.From[T](db).Where(...).UpdateOrCreate(values, &defaults) // (created, error)
+
+// Transações (atômico — commit/rollback automático)
+fw.DB.Use().Transaction(func(tx *database.Tx) error {
+    orm.CreateTx(tx, &model)
+    return orm.FromTx[T](tx).Where(...).Update(...)
+})
 
 // Multi-tenant
 db := fw.DB.Use().WithSchema("tenant_abc")

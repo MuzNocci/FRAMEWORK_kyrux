@@ -14,6 +14,7 @@ type Settings struct {
 	Database      DatabaseSettings   // primeiro banco (atalho para Databases[0])
 	Databases     []DatabaseSettings // todos os bancos configurados
 	Cache         CacheSettings
+	Queue         QueueSettings
 	Security      SecuritySettings
 }
 
@@ -41,6 +42,13 @@ type CacheSettings struct {
 	Enabled bool
 	Driver  string
 	Addr    string
+}
+
+type QueueSettings struct {
+	Enabled bool
+	Driver  string // memory | redis (roadmap)
+	Addr    string // endereço do broker quando driver != memory
+	Workers int
 }
 
 type SecuritySettings struct {
@@ -107,7 +115,7 @@ func Load() *Settings {
 		InstalledApps: InstalledApps,
 		App: AppSettings{
 			Name:    "kyrux",
-			Version: "0.1.0 (Alpha)",
+			Version: "0.2.0 (Alpha)",
 			Env:     env,
 			Debug:   env == "development",
 		},
@@ -121,6 +129,12 @@ func Load() *Settings {
 			Enabled: environment.GetOr("CACHE_ENABLED", "false") == "true",
 			Driver:  environment.Get("CACHE_DRIVER"),
 			Addr:    environment.Get("CACHE_ADDR"),
+		},
+		Queue: QueueSettings{
+			Enabled: environment.GetOr("QUEUE_ENABLED", "false") == "true",
+			Driver:  environment.GetOr("QUEUE_DRIVER", "memory"),
+			Addr:    environment.Get("QUEUE_ADDR"),
+			Workers: intOr(environment.Get("QUEUE_WORKERS"), 4),
 		},
 		Security: SecuritySettings{
 			SecretKey:     environment.GetOr("SECRET_KEY", "change-me"),

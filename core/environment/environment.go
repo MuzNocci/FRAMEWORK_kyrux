@@ -93,9 +93,22 @@ func GetOr(key, fallback string) string {
 //	DB_DSN=...
 //
 // Retorna []map[string]string, um map por bloco.
+//
+// Chaves com o mesmo prefixo do signalKey (ex: "DB_" para "DB_NAME") que
+// aparecem ANTES do primeiro marcador pertencem ao primeiro bloco — assim
+// a ordem das chaves dentro do bloco não importa:
+//
+//	DB_ENABLED=true    ← antes do marcador, ainda é do bloco 1
+//	DB_NAME=principal  ← marcador do bloco 1
 func GetBlocks(signalKey string) []map[string]string {
 	var blocks []map[string]string
 	var current map[string]string
+
+	prefix := ""
+	if i := strings.Index(signalKey, "_"); i > 0 {
+		prefix = signalKey[:i+1]
+	}
+	pending := map[string]string{}
 
 	for _, line := range rawLines {
 		key, value, ok := strings.Cut(line, "=")
@@ -104,9 +117,19 @@ func GetBlocks(signalKey string) []map[string]string {
 		}
 		if key == signalKey {
 			current = map[string]string{key: value}
+			// Chaves do mesmo prefixo vistas antes do primeiro marcador
+			// entram no primeiro bloco (sem sobrescrever as dele).
+			for k, v := range pending {
+				if _, exists := current[k]; !exists {
+					current[k] = v
+				}
+			}
+			pending = nil
 			blocks = append(blocks, current)
 		} else if current != nil {
 			current[key] = value
+		} else if prefix != "" && pending != nil && strings.HasPrefix(key, prefix) {
+			pending[key] = value
 		}
 	}
 
