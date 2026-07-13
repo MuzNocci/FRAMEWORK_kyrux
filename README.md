@@ -58,7 +58,8 @@ Campo de login definido via tag `kyrux:"login"` no model — imutável após o p
 Argon2id para senhas, AES-256-GCM para campos sensíveis, HMAC-SHA256 para assinaturas.
 
 ### ORM
-Query builder fluente com generics: Where/OrWhere/WhereIn, OrderBy múltiplo, Distinct,
+Query builder fluente com generics: Where/OrWhere/WhereIn, Join/LeftJoin (filtro por
+relação), Prefetch (carregamento relacionado sem N+1), OrderBy múltiplo, Distinct,
 Exists/Count/Sum/Avg/Min/Max, First/Last, GetOrCreate/UpdateOrCreate, CreateAll (bulk),
 Each (streaming), hash/encrypt automático, autonow, paginação (com e sem COUNT),
 transações (`FromTx`/`CreateTx`), multi-tenant por schema.
@@ -68,6 +69,8 @@ Wrapper de `database/sql` com pool configurado, multi-conexão nomeada, transaç
 
 ### Migrations
 Arquivos `.sql` numerados em `database/migrations/` com seções `up` e `-- down`.
+Autodetector: tabelas novas viram `CREATE TABLE`; campos novos em models existentes
+viram `ALTER TABLE ADD COLUMN`; remoções são apenas sugeridas (comentadas).
 Rastreamento via tabela `kyrux_migrations`. `removemigration all` executa o down antes de remover o registro.
 
 ### Cache

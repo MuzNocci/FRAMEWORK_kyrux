@@ -17,6 +17,11 @@ var reIdent = regexp.MustCompile(`(?i)^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z
 
 func validIdent(s string) bool { return reIdent.MatchString(strings.TrimSpace(s)) }
 
+// reJoinOn valida a cláusula ON de um JOIN: "tabela.coluna = tabela.coluna".
+var reJoinOn = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+func validJoinOn(s string) bool { return reJoinOn.MatchString(strings.TrimSpace(s)) }
+
 // sqlExec é satisfeito por *database.DB e *database.Tx — permite que o mesmo
 // builder execute dentro e fora de transações.
 type sqlExec interface {
@@ -46,6 +51,7 @@ type Query[T any] struct {
 	schema   string
 	meta     *ModelMeta
 	cols     []string
+	joins    []string
 	where    []whereClause
 	args     []any
 	orderBy  []string
@@ -74,6 +80,36 @@ func (q *Query[T]) Distinct() *Query[T] {
 	q.distinct = true
 	return q
 }
+
+// addJoin valida e registra uma cláusula de JOIN.
+func (q *Query[T]) addJoin(kind, table, on string) *Query[T] {
+	if !validIdent(table) {
+		q.err = fmt.Errorf("orm: join: tabela inválida: %q", table)
+		return q
+	}
+	if !validJoinOn(on) {
+		q.err = fmt.Errorf("orm: join: cláusula ON inválida (esperado \"tabela.col = tabela.col\"): %q", on)
+		return q
+	}
+	q.joins = append(q.joins, kind+" JOIN "+table+" ON "+on)
+	return q
+}
+
+// Join adiciona um INNER JOIN — use para FILTRAR pela tabela relacionada
+// (equivalente a atravessar relações no filter do Django). Com JOIN, o
+// SELECT usa "tabela_base.*", então o resultado continua sendo []T sem
+// conflito de colunas; qualifique as colunas do Where com o nome da tabela:
+//
+//	posts, _ := orm.From[Post](db).
+//	    Join("users", "users.id = posts.user_id").
+//	    Where("users.is_active = ?", true).
+//	    All()
+//
+// Para CARREGAR os registros relacionados, use orm.Prefetch.
+func (q *Query[T]) Join(table, on string) *Query[T] { return q.addJoin("INNER", table, on) }
+
+// LeftJoin adiciona um LEFT JOIN — mesmas regras de Join.
+func (q *Query[T]) LeftJoin(table, on string) *Query[T] { return q.addJoin("LEFT", table, on) }
 
 // Where adiciona uma condição AND à cláusula WHERE.
 // Use ? como placeholder; para PostgreSQL são reescritos para $N automaticamente.
@@ -276,8 +312,8 @@ func (q *Query[T]) Exists() (bool, error) {
 		return false, q.err
 	}
 	var sb strings.Builder
-	sb.WriteString("SELECT 1 FROM ")
-	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
+	sb.WriteString("SELECT 1")
+	q.writeFrom(&sb)
 	q.writeWhere(&sb)
 	sb.WriteString(" LIMIT 1")
 	var one int
@@ -297,8 +333,8 @@ func (q *Query[T]) Count() (int64, error) {
 		return 0, q.err
 	}
 	var sb strings.Builder
-	sb.WriteString("SELECT COUNT(*) FROM ")
-	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
+	sb.WriteString("SELECT COUNT(*)")
+	q.writeFrom(&sb)
 	q.writeWhere(&sb)
 	var n int64
 	if err := q.scanRow(rewritePlaceholders(q.driver, sb.String()), q.args, &n); err != nil {
@@ -316,7 +352,8 @@ func (q *Query[T]) aggregate(fn, col string) (float64, error) {
 		return 0, fmt.Errorf("orm: %s: identificador inválido: %q", strings.ToLower(fn), col)
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "SELECT %s(%s) FROM %s", fn, col, qualifiedTable(q.schema, q.meta.Table))
+	fmt.Fprintf(&sb, "SELECT %s(%s)", fn, col)
+	q.writeFrom(&sb)
 	q.writeWhere(&sb)
 	var v sql.NullFloat64
 	if err := q.scanRow(rewritePlaceholders(q.driver, sb.String()), q.args, &v); err != nil {
@@ -341,6 +378,9 @@ func (q *Query[T]) Update(values map[string]any) error {
 	}
 	if len(q.where) == 0 {
 		return fmt.Errorf("orm: update sem WHERE não é permitido")
+	}
+	if len(q.joins) > 0 {
+		return fmt.Errorf("orm: update com JOIN não é suportado — filtre por subquery no Where")
 	}
 
 	colMeta := q.meta.ColToField
@@ -417,6 +457,9 @@ func (q *Query[T]) Delete() error {
 	}
 	if len(q.where) == 0 {
 		return fmt.Errorf("orm: delete sem WHERE não é permitido")
+	}
+	if len(q.joins) > 0 {
+		return fmt.Errorf("orm: delete com JOIN não é suportado — filtre por subquery no Where")
 	}
 	var sb strings.Builder
 	sb.WriteString("DELETE FROM ")
@@ -586,6 +629,16 @@ func (q *Query[T]) writeWhere(sb *strings.Builder) {
 	}
 }
 
+// writeFrom escreve "FROM tabela" seguido das cláusulas de JOIN.
+func (q *Query[T]) writeFrom(sb *strings.Builder) {
+	sb.WriteString(" FROM ")
+	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
+	for _, j := range q.joins {
+		sb.WriteByte(' ')
+		sb.WriteString(j)
+	}
+}
+
 func (q *Query[T]) writeSelectHead(sb *strings.Builder) {
 	sb.WriteString("SELECT ")
 	if q.distinct {
@@ -598,11 +651,15 @@ func (q *Query[T]) writeSelectHead(sb *strings.Builder) {
 			}
 			sb.WriteString(c)
 		}
+	} else if len(q.joins) > 0 {
+		// Com JOIN, seleciona só as colunas da tabela base — o scan em T
+		// não colide com colunas homônimas das tabelas juntadas.
+		sb.WriteString(q.meta.Table)
+		sb.WriteString(".*")
 	} else {
 		sb.WriteByte('*')
 	}
-	sb.WriteString(" FROM ")
-	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
+	q.writeFrom(sb)
 }
 
 func (q *Query[T]) writeOrderBy(sb *strings.Builder) {

@@ -853,7 +853,15 @@ A seção **up** é aplicada pelo `migrate`. A seção **down** é executada pel
 
 ### Gerar migrations automaticamente (`makemigrations`)
 
-O comando lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go` e `core/security/auth/*.go`, compara com as tabelas já migradas e gera o SQL com as seções up e down automaticamente:
+O comando lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go` e `core/security/auth/*.go`, compara com o schema das migrations existentes e gera o SQL com as seções up e down automaticamente:
+
+- **Tabela nova** → `CREATE TABLE` completo (+ índices unique/fk).
+- **Campo novo em model existente** → `ALTER TABLE ... ADD COLUMN` (autodetectado).
+- **Campo removido do model** → a remoção **não** é gerada (perda de dados);
+  o comando avisa e escreve a sugestão `-- ALTER TABLE ... DROP COLUMN ...;`
+  comentada na migration, para você descomentar após revisar.
+- **Renomear campo ou mudar tipo** → migration manual (o detector veria um
+  ADD + um aviso de coluna removida).
 
 ```bash
 go run main.go makemigrations
@@ -1053,6 +1061,7 @@ publicados, err := orm.From[Post](db).
 | `OrWhere(cond string, args ...any)` | Adiciona condição `OR` (precedência: AND liga mais forte, como no SQL). |
 | `WhereIn(col string, vals ...any)` | `col IN (...)` com expansão de placeholders. Aceita slice: `WhereIn("id", ids)`. Lista vazia = nenhum resultado. |
 | `OrderBy(cols ...string)` | Define `ORDER BY` — múltiplas colunas: `OrderBy("criado_em DESC", "id ASC")`. |
+| `Join(tabela, on)` / `LeftJoin(tabela, on)` | JOIN para **filtrar** pela tabela relacionada. O SELECT vira `tabela_base.*` — o resultado continua `[]T`. |
 | `Distinct()` | `SELECT DISTINCT`. |
 | `Limit(n int)` | Máximo de linhas retornadas. |
 | `Offset(n int)` | Linhas a pular — use com `Limit` para paginação. |
@@ -1152,6 +1161,42 @@ Para tabelas grandes e feeds infinitos, `PaginateNoCount` evita o `COUNT(*)`
 ```go
 p, err := orm.From[Post](db).OrderBy("id DESC").PaginateNoCount(page, 20)
 ```
+
+### Relações: filtrar com Join, carregar com Prefetch
+
+Declare a FK no model com `kyrux:"fk:tabela"` (gera `REFERENCES` + índice na
+migration). Para **filtrar** pela tabela relacionada, use `Join` — o SELECT
+usa `tabela_base.*`, então o resultado continua sendo `[]T` sem conflito de
+colunas (qualifique as colunas do `Where`):
+
+```go
+// Posts de usuários ativos:
+posts, _ := orm.From[Post](db).
+    Join("users", "users.id = posts.user_id").
+    Where("users.is_active = ?", true).
+    All()
+```
+
+Para **carregar** os registros relacionados, use `Prefetch` — o equivalente
+explícito do `prefetch_related` do Django (1 query + agrupamento em memória,
+sem N+1):
+
+```go
+posts, _ := orm.From[Post](db).All()
+ids := make([]int64, len(posts))
+for i, p := range posts { ids[i] = p.ID }
+
+// 1 query: SELECT * FROM comentarios WHERE post_id IN (...)
+porPost, _ := orm.Prefetch[Comentario](db, "post_id", ids,
+    func(c *Comentario) int64 { return c.PostID })
+
+for _, p := range posts {
+    comentarios := porPost[p.ID] // []Comentario do post
+}
+```
+
+> `Update`/`Delete` não aceitam `Join` (sintaxe não-portável entre bancos) —
+> use subquery no `Where`: `Where("user_id IN (SELECT id FROM users WHERE ...)")`.
 
 No template:
 
@@ -1977,10 +2022,16 @@ orm.From[T](db).Sum("col")                     // (float64, error) — também A
 .Where("col = ?", val)
 .OrWhere("col = ?", val)
 .WhereIn("id", ids)           // expande slice em placeholders
+.Join("users", "users.id = posts.user_id")     // filtro por relação
+.LeftJoin("users", "users.id = posts.user_id")
 .OrderBy("col DESC", "id")    // múltiplas colunas
 .Distinct()
 .Limit(n)
 .Offset(n)
+
+// Relações (carregamento sem N+1)
+orm.Prefetch[Comentario](db, "post_id", ids, func(c *Comentario) int64 { return c.PostID })
+// → (map[int64][]Comentario, error)
 
 // Paginação
 orm.From[T](db).Where(...).OrderBy("id DESC").Paginate(page, 20)

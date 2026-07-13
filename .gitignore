@@ -3,6 +3,7 @@
 
 # Development
 .claude
+.vscode
 
 # Build
 /bin/

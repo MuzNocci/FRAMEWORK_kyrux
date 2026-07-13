@@ -383,11 +383,17 @@ reduz ciclos de GC sob pressão). O bootstrap já suporta `RUNTIME_GOGC`
 > FromTx/CreateTx, OrderBy múltiplo, WhereIn, OrWhere, Exists, Sum/Avg/Min/Max,
 > Last, Distinct, GetOrCreate, UpdateOrCreate, CreateAll, Each e autonow) +
 > G2 parcial (tag `fk:` gera REFERENCES + índice nas migrations) + correção
-> do toSnake para acrônimos (UserID → user_id). Restam como roadmap:
-> G2-consultas (JOIN/prefetch no builder) e G3 (autodetector de ALTER).
+> do toSnake para acrônimos (UserID → user_id).
 > Extra desta rodada: sistema de **Queue** (fila de tarefas com workers,
 > retry e drenagem no shutdown — bloco QUEUE_* no .env) e parser de blocos
 > do .env tolerante à ordem das chaves.
+>
+> **G2-consultas e G3 concluídos em seguida**: Join/LeftJoin no builder
+> (filtro por relação com SELECT tabela_base.* — sem conflito de scan),
+> orm.Prefetch/PrefetchTx (carregamento relacionado sem N+1) e autodetector
+> de ALTER no makemigrations (ADD COLUMN automático; DROP apenas sugerido
+> como comentário — nunca destrutivo sem revisão).
+> **Com isso, todas as lacunas G1–G7 estão fechadas.**
 >
 > Análise de completude: o ORM do Kyrux está completo e funciona "igual ao
 > Django"? Resposta curta: **a filosofia é fiel, mas a superfície coberta é

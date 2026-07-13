@@ -8,6 +8,8 @@ import (
 	"kyrux/core/environment"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -29,12 +31,13 @@ func runMakeMigrations() error {
 	}
 	files := append(appFiles, coreFiles...)
 
-	existing, err := migTablesInDir("database/migrations")
+	schema, err := migSchemaInDir("database/migrations")
 	if err != nil {
 		return fmt.Errorf("ler migrações existentes: %w", err)
 	}
 
 	var pending []migModel
+	var alters []migAlter
 	for _, f := range files {
 		models, err := migParseFile(f)
 		if err != nil {
@@ -42,14 +45,29 @@ func runMakeMigrations() error {
 			continue
 		}
 		for _, m := range models {
-			if !existing[m.Table] {
+			cols, exists := schema[m.Table]
+			if !exists {
 				pending = append(pending, m)
+				continue
+			}
+			if a := migDiffModel(m, cols); a != nil {
+				alters = append(alters, *a)
 			}
 		}
 	}
 
-	if len(pending) == 0 {
-		fmt.Println("Nenhum model novo encontrado.")
+	hasAdds := false
+	for _, a := range alters {
+		if len(a.Add) > 0 {
+			hasAdds = true
+		}
+		for _, c := range a.Removed {
+			fmt.Printf("  aviso: coluna '%s.%s' existe nas migrations mas sumiu do model — remoção NÃO é gerada automaticamente\n", a.Table, c)
+		}
+	}
+
+	if len(pending) == 0 && !hasAdds {
+		fmt.Println("Nenhuma mudança detectada nos models.")
 		return nil
 	}
 
@@ -59,7 +77,7 @@ func runMakeMigrations() error {
 	}
 
 	outPath := filepath.Join("database", "migrations", num+"_auto.sql")
-	sql := migGenerateSQL(pending, driver)
+	sql := migGenerateSQL(pending, alters, driver)
 
 	if err := os.WriteFile(outPath, []byte(sql), 0644); err != nil {
 		return fmt.Errorf("escrever %s: %w", outPath, err)
@@ -69,8 +87,47 @@ func runMakeMigrations() error {
 	for _, m := range pending {
 		fmt.Printf("  + %s → tabela %s\n", m.Name, m.Table)
 	}
+	for _, a := range alters {
+		for _, f := range a.Add {
+			fmt.Printf("  ~ %s → ADD COLUMN %s\n", a.Table, f.Column)
+		}
+	}
 	fmt.Println("\nRevisione o arquivo antes de executar 'go run main.go migrate'.")
 	return nil
+}
+
+// migAlter descreve as diferenças entre um model e o schema das migrations.
+type migAlter struct {
+	Table   string
+	Add     []migField // colunas novas no model → ALTER TABLE ADD COLUMN
+	Removed []string   // colunas nas migrations que sumiram do model → só aviso
+}
+
+// migDiffModel compara os campos do model com as colunas conhecidas da tabela.
+// Retorna nil quando não há diferença.
+func migDiffModel(m migModel, cols map[string]bool) *migAlter {
+	a := migAlter{Table: m.Table}
+	modelCols := make(map[string]bool, len(m.Fields))
+	for _, f := range m.Fields {
+		modelCols[f.Column] = true
+		if !cols[f.Column] {
+			if f.IsPK {
+				fmt.Printf("  aviso: PK '%s.%s' não encontrada nas migrations — mudança de PK exige migration manual\n", m.Table, f.Column)
+				continue
+			}
+			a.Add = append(a.Add, f)
+		}
+	}
+	for c := range cols {
+		if !modelCols[c] {
+			a.Removed = append(a.Removed, c)
+		}
+	}
+	sort.Strings(a.Removed)
+	if len(a.Add) == 0 && len(a.Removed) == 0 {
+		return nil
+	}
+	return &a
 }
 
 // ── tipos internos ────────────────────────────────────────────────────────────
@@ -176,7 +233,7 @@ func migBuildField(name, goType, kyruxTag string, notNull bool) migField {
 
 // ── geração de SQL ────────────────────────────────────────────────────────────
 
-func migGenerateSQL(models []migModel, driver string) string {
+func migGenerateSQL(models []migModel, alters []migAlter, driver string) string {
 	isPostgres := driver == "postgres" || driver == "pgx"
 
 	var sb strings.Builder
@@ -213,8 +270,43 @@ func migGenerateSQL(models []migModel, driver string) string {
 		}
 	}
 
-	// Seção down: desfaz tudo na ordem inversa
+	// Colunas novas em tabelas existentes (autodetectadas).
+	for _, a := range alters {
+		if len(a.Add) > 0 {
+			fmt.Fprintf(&sb, "\n-- Colunas novas em %s\n", a.Table)
+			for _, f := range a.Add {
+				fmt.Fprintf(&sb, "ALTER TABLE %s ADD COLUMN %s %s%s;\n",
+					a.Table, f.Column, migSQLType(f, isPostgres), migAlterConstraints(f, isPostgres))
+				if f.Unique {
+					fmt.Fprintf(&sb, "CREATE UNIQUE INDEX IF NOT EXISTS %s_%s_idx ON %s (%s);\n",
+						a.Table, f.Column, a.Table, f.Column)
+				} else if f.FK != "" {
+					fmt.Fprintf(&sb, "CREATE INDEX IF NOT EXISTS %s_%s_idx ON %s (%s);\n",
+						a.Table, f.Column, a.Table, f.Column)
+				}
+			}
+		}
+		if len(a.Removed) > 0 {
+			fmt.Fprintf(&sb, "\n-- AVISO: colunas presentes nas migrations mas ausentes do model '%s'.\n", a.Table)
+			sb.WriteString("-- A remoção NÃO é gerada automaticamente (perda de dados) — descomente para aplicar:\n")
+			for _, c := range a.Removed {
+				fmt.Fprintf(&sb, "-- ALTER TABLE %s DROP COLUMN %s;\n", a.Table, c)
+			}
+		}
+	}
+
+	// Seção down: desfaz tudo na ordem inversa (alters antes das tabelas).
 	sb.WriteString("\n-- down\n")
+	for i := len(alters) - 1; i >= 0; i-- {
+		a := alters[i]
+		for j := len(a.Add) - 1; j >= 0; j-- {
+			f := a.Add[j]
+			if f.Unique || f.FK != "" {
+				fmt.Fprintf(&sb, "DROP INDEX IF EXISTS %s_%s_idx;\n", a.Table, f.Column)
+			}
+			fmt.Fprintf(&sb, "ALTER TABLE %s DROP COLUMN %s;\n", a.Table, f.Column)
+		}
+	}
 	for i := len(models) - 1; i >= 0; i-- {
 		m := models[i]
 		for _, f := range m.Fields {
@@ -226,6 +318,26 @@ func migGenerateSQL(models []migModel, driver string) string {
 	}
 
 	return sb.String()
+}
+
+// migAlterConstraints monta as constraints de um ADD COLUMN.
+// Diferente do CREATE TABLE, não emite UNIQUE inline — o SQLite não aceita
+// UNIQUE em ADD COLUMN; o índice único é criado em statement separado.
+func migAlterConstraints(f migField, isPostgres bool) string {
+	var parts []string
+	if f.NotNull {
+		parts = append(parts, "NOT NULL")
+		if def := migDefault(f.GoType, isPostgres); def != "" {
+			parts = append(parts, "DEFAULT "+def)
+		}
+	}
+	if f.FK != "" {
+		parts = append(parts, fmt.Sprintf("REFERENCES %s(id)", f.FK))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
 }
 
 func migSQLType(f migField, isPostgres bool) string {
@@ -317,31 +429,99 @@ func migNextNum(dir string) (string, error) {
 	return fmt.Sprintf("%04d", max+1), nil
 }
 
-func migTablesInDir(dir string) (map[string]bool, error) {
+var (
+	reAlterAdd  = regexp.MustCompile(`(?i)^ALTER\s+TABLE\s+"?([a-zA-Z_][\w.]*)"?\s+ADD\s+(?:COLUMN\s+)?"?([a-zA-Z_]\w*)"?`)
+	reAlterDrop = regexp.MustCompile(`(?i)^ALTER\s+TABLE\s+"?([a-zA-Z_][\w.]*)"?\s+DROP\s+(?:COLUMN\s+)?"?([a-zA-Z_]\w*)"?`)
+)
+
+// migConstraintKeywords são inícios de linha dentro de CREATE TABLE que não
+// declaram coluna.
+var migConstraintKeywords = map[string]bool{
+	"PRIMARY": true, "FOREIGN": true, "UNIQUE": true,
+	"CONSTRAINT": true, "CHECK": true, "KEY": true, "INDEX": true,
+}
+
+// migSchemaInDir reconstrói o schema conhecido a partir das migrations:
+// tabela → conjunto de colunas. Considera CREATE TABLE e ALTER TABLE
+// ADD/DROP COLUMN, e ignora a seção "-- down" de cada arquivo.
+func migSchemaInDir(dir string) (map[string]map[string]bool, error) {
 	files, _ := filepath.Glob(filepath.Join(dir, "*.sql"))
-	tables := make(map[string]bool)
+	sort.Strings(files) // ordem de aplicação: ADD/DROP posteriores prevalecem
+	schema := make(map[string]map[string]bool)
+
 	for _, f := range files {
 		content, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
+		inTable := ""
 		for _, line := range strings.Split(string(content), "\n") {
-			upper := strings.TrimSpace(strings.ToUpper(line))
+			trim := strings.TrimSpace(line)
+			if trim == "" {
+				continue
+			}
+			if strings.HasPrefix(trim, "--") {
+				// A seção down desfaz o up — processá-la anularia o schema.
+				if strings.EqualFold(trim, "-- down") {
+					break
+				}
+				continue
+			}
+
+			if inTable != "" {
+				if strings.HasPrefix(trim, ")") {
+					inTable = ""
+					continue
+				}
+				fields := strings.Fields(trim)
+				if len(fields) == 0 {
+					continue
+				}
+				col := strings.ToLower(strings.Trim(fields[0], `",`))
+				if col == "" || migConstraintKeywords[strings.ToUpper(col)] {
+					continue
+				}
+				schema[inTable][col] = true
+				continue
+			}
+
+			upper := strings.ToUpper(trim)
+			matched := false
 			for _, prefix := range []string{"CREATE TABLE IF NOT EXISTS ", "CREATE TABLE "} {
 				if strings.HasPrefix(upper, prefix) {
-					rest := strings.TrimPrefix(upper, prefix)
+					rest := trim[len(prefix):]
 					fields := strings.FieldsFunc(rest, func(r rune) bool {
 						return r == ' ' || r == '\t' || r == '(' || r == '"' || r == '\''
 					})
 					if len(fields) > 0 {
-						tables[strings.ToLower(fields[0])] = true
+						inTable = strings.ToLower(fields[0])
+						if schema[inTable] == nil {
+							schema[inTable] = make(map[string]bool)
+						}
 					}
+					matched = true
 					break
+				}
+			}
+			if matched {
+				continue
+			}
+
+			if m := reAlterAdd.FindStringSubmatch(trim); m != nil {
+				t, c := strings.ToLower(m[1]), strings.ToLower(m[2])
+				if schema[t] == nil {
+					schema[t] = make(map[string]bool)
+				}
+				schema[t][c] = true
+			} else if m := reAlterDrop.FindStringSubmatch(trim); m != nil {
+				t, c := strings.ToLower(m[1]), strings.ToLower(m[2])
+				if schema[t] != nil {
+					delete(schema[t], c)
 				}
 			}
 		}
 	}
-	return tables, nil
+	return schema, nil
 }
 
 // ── helpers de AST ───────────────────────────────────────────────────────────
