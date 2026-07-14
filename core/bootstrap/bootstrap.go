@@ -105,6 +105,34 @@ func Init(envPath string) (*Framework, error) {
 	store := session.NewStore(time.Duration(cfg.Security.SessionTTL) * time.Second)
 
 	dbm := orm.LoadDatabases(cfg.Databases)
+
+	// Sem nenhum banco configurado, o admin não teria como autenticar
+	// ninguém. Em development, o Kyrux cria um SQLite local para o admin
+	// funcionar de imediato — é a ÚNICA situação em que o framework abre um
+	// banco por conta própria. Em produção isso NUNCA acontece: escrever
+	// silenciosamente num arquivo local efêmero em vez do banco pretendido
+	// seria pior que simplesmente recusar montar o admin.
+	usingFallbackDB := false
+	if cfg.Admin.Enabled && !orm.HasConnections() {
+		if cfg.App.Debug {
+			const fallbackPath = "database/kyrux.sqlite3"
+			fdb, err := database.OpenSQLiteFallback(fallbackPath)
+			if err != nil {
+				log.Printf("bootstrap: ADMIN_ENABLED=true sem banco configurado — falha ao criar SQLite de desenvolvimento em %s: %v\n", fallbackPath, err)
+			} else {
+				orm.Register("default", fdb)
+				dbm.AddDB("default", fdb)
+				usingFallbackDB = true
+				if err := orm.EnsureSQLiteTable[auth.User](fdb); err != nil {
+					log.Printf("bootstrap: falha ao preparar tabela de usuários no SQLite de desenvolvimento: %v\n", err)
+				}
+				log.Printf("bootstrap: nenhum banco configurado — criado SQLite de desenvolvimento para o admin em %s (apenas development; configure um banco real para produção)\n", fallbackPath)
+			}
+		} else {
+			log.Println("bootstrap: ADMIN_ENABLED=true sem banco configurado — em produção o Kyrux não cria um SQLite automaticamente; configure um banco real no .env. O admin não será montado.")
+		}
+	}
+
 	auth.SetDBEnabled(orm.HasConnections())
 
 	f := &Framework{
@@ -150,6 +178,14 @@ func Init(envPath string) (*Framework, error) {
 	// admin.Register (feito pelos apps acima) E ADMIN_ENABLED=true —
 	// os dois portões precisam estar abertos (opt-in em código + config).
 	if cfg.Admin.Enabled {
+		if usingFallbackDB {
+			// Só agora (depois do loop acima) os apps já registraram seus
+			// models no admin — é o primeiro momento em que dá pra criar
+			// as tabelas deles no SQLite de desenvolvimento.
+			if err := admin.EnsureAllTables(dbm.Use()); err != nil {
+				log.Printf("bootstrap: erro ao preparar tabelas dos models do admin no SQLite de desenvolvimento: %v\n", err)
+			}
+		}
 		admin.Mount(r, dbm, store, cfg.Admin.Path, cfg.App.Name, cfg.App.Version)
 	}
 

@@ -16,6 +16,7 @@ type Field struct {
 	IsHash    bool // kyrux:"hash"    — auto-hash Argon2id na escrita
 	IsEncrypt bool // kyrux:"encrypt" — auto-cifra AES-256-GCM na escrita, decifra na leitura
 	IsAutoNow bool // kyrux:"autonow" — CURRENT_TIMESTAMP automático em todo Update (ex: updated_at)
+	Unique    bool // kyrux:"unique"  — usado por migrations e pelo DDL automático do fallback SQLite
 	GoIndex   int
 	Size      int    // kyrux:"size:N" — usado por migrations
 	Default   string // kyrux:"default:value" — valor padrão SQL se campo for vazio
@@ -84,6 +85,8 @@ func buildMeta(t reflect.Type) *ModelMeta {
 				f.IsEncrypt = true
 			case part == "autonow":
 				f.IsAutoNow = true
+			case part == "unique":
+				f.Unique = true
 			case strings.HasPrefix(part, "column:"):
 				f.Column = strings.TrimPrefix(part, "column:")
 			case strings.HasPrefix(part, "size:"):

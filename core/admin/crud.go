@@ -24,11 +24,12 @@ type adminRow struct {
 // (handlers.go), nunca pelas closures — mantém o pacote sem acoplamento a
 // como a conexão é obtida (Manager, DB direto, etc.).
 type (
-	listFunc   func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) ([]adminRow, int64, error)
-	getFunc    func(db *database.DB, pk string) (adminRow, error)
-	createFunc func(db *database.DB, form url.Values) error
-	updateFunc func(db *database.DB, pk string, form url.Values) error
-	deleteFunc func(db *database.DB, pk string) error
+	listFunc        func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) ([]adminRow, int64, error)
+	getFunc         func(db *database.DB, pk string) (adminRow, error)
+	createFunc      func(db *database.DB, form url.Values) error
+	updateFunc      func(db *database.DB, pk string, form url.Values) error
+	deleteFunc      func(db *database.DB, pk string) error
+	ensureTableFunc func(db *database.DB) error
 )
 
 // registerCRUD fecha as operações de CRUD sobre o tipo T e as guarda em rm.
@@ -126,6 +127,10 @@ func registerCRUD[T any](rm *registeredModel) {
 			return err
 		}
 		return orm.FromDB[T](db).Where(rm.pkColumn+" = ?", pkArg).Delete()
+	}
+
+	rm.ensureTable = func(db *database.DB) error {
+		return orm.EnsureSQLiteTable[T](db)
 	}
 }
 

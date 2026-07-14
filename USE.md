@@ -1832,6 +1832,28 @@ func Register(r *router.Router, fw *bootstrap.Framework) {
 marcados `kyrux:"hash"` (nunca exibidos, em lugar nenhum). Sem `SearchFields`,
 a busca fica desativada para aquele model.
 
+### Sem banco configurado
+
+Se `ADMIN_ENABLED=true` e nenhum banco estiver configurado no `.env`, o
+comportamento depende do ambiente:
+
+- **`APP_ENV=development`**: o Kyrux cria sozinho um SQLite local em
+  `database/kyrux.sqlite3` (pasta já ignorada pelo git), registra-o como
+  conexão `"default"` e gera automaticamente a tabela de `auth.User` e a de
+  cada model registrado via `admin.Register` — o admin funciona de imediato,
+  sem `makemigrations`/`migrate`. É a **única** situação em que o Kyrux abre
+  um banco por conta própria; para qualquer banco real, o driver continua
+  sendo escolha e responsabilidade sua.
+- **`APP_ENV=production`**: nada disso acontece. O Kyrux **nunca** cria um
+  SQLite automaticamente em produção — escrever silenciosamente num arquivo
+  local efêmero em vez do banco pretendido seria pior que simplesmente
+  recusar. O log explica o motivo e o admin não é montado (404).
+
+> O fallback só faz `CREATE TABLE IF NOT EXISTS` — nunca `ALTER`. Se o model
+> evoluir (novo campo), configure um banco de verdade e use
+> `makemigrations`/`migrate`; o fallback é para começar rápido, não para
+> acompanhar mudanças de schema ao longo do tempo.
+
 ### Segurança
 
 - **Acesso exige `IsStaff` ou `IsAdmin`** no model `auth.User` — verificado a
@@ -1848,9 +1870,10 @@ a busca fica desativada para aquele model.
   valor real, o valor simplesmente não sai do banco para o template. Na
   edição, o campo de senha fica em branco: preencher define uma nova senha
   (hash automático), deixar em branco mantém a atual.
-- **Sem banco, sem admin**: se a conexão `"default"` (onde vive `auth.User`)
-  não estiver disponível, o admin recusa montar — não há como protegê-lo sem
-  autenticação, então ele simplesmente não sobe (log explica o motivo).
+- **Sem banco disponível, sem admin**: se mesmo após a tentativa de fallback
+  (ou em produção, onde não há fallback) a conexão `"default"` não existir, o
+  admin recusa montar — não há como protegê-lo sem autenticação, então ele
+  simplesmente não sobe (log explica o motivo).
 - Toda entrada do usuário (busca, ordenação, paginação) é validada contra os
   metadados reais do model antes de chegar ao SQL — `sort=coluna_falsa` é
   silenciosamente ignorado, nunca vira uma coluna arbitrária na query.

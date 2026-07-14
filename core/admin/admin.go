@@ -17,6 +17,7 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -24,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"kyrux/core/database"
 	"kyrux/core/orm"
 )
 
@@ -65,11 +67,12 @@ type registeredModel struct {
 	pkColumn string
 	pkKind   reflect.Kind
 
-	list   listFunc
-	get    getFunc
-	create createFunc
-	update updateFunc
-	delete deleteFunc
+	list        listFunc
+	get         getFunc
+	create      createFunc
+	update      updateFunc
+	delete      deleteFunc
+	ensureTable ensureTableFunc
 
 	// nomes de campo Go pendentes de resolução (setados pelas Options,
 	// resolvidos após Fields ser construído).
@@ -256,6 +259,22 @@ func Count() int {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	return len(registry)
+}
+
+// EnsureAllTables cria (CREATE TABLE IF NOT EXISTS) a tabela de cada model
+// registrado em db, se ainda não existir. Uso exclusivo do bootstrap, sobre
+// o SQLite de fallback criado quando o admin é habilitado sem nenhum banco
+// configurado — nunca chame isto sobre uma conexão real gerenciada por
+// migrations explícitas. Continua tentando os demais models mesmo se um
+// falhar; os erros são agregados via errors.Join.
+func EnsureAllTables(db *database.DB) error {
+	var errs []error
+	for _, rm := range modelsOrdered() {
+		if err := rm.ensureTable(db); err != nil {
+			errs = append(errs, fmt.Errorf("admin: model %q: %w", rm.Label, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // modelsOrdered retorna os models na ordem de registro (para a navegação).
