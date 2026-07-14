@@ -38,10 +38,10 @@ ContextProcessors e injeção automática de WebSocket.
 
 ### Templates
 Herança via `{% extends %}`, blocos com `{% block %}`, inclusão com `{% include %}`.
-Funções globais: `{{ AppName }}`, `{{ Version }}`, `{{ Env }}`, `{{ Addr }}`, `{{ url "nome" }}`, `{{ csrf_token }}`, `{{ statics "app" "path/arquivo.css" }}`.
+Funções globais: `{{ AppName }}`, `{{ Version }}`, `{{ Env }}`, `{{ Addr }}`, `{{ GoVersion }}`, `{{ url "nome" }}`, `{{ csrf_token }}`, `{{ statics "app" "path/arquivo.css" }}`.
 
 ### Middleware
-Recovery (panic), AllowedHosts, CORS, SecureHeaders, RequireLogin (SSR), RequireAuth (JWT), RateLimit (por IP), compressão gzip.
+Recovery (panic), MaxBodySize, AllowedHosts, CORS, SecureHeaders (production), RequireLogin (SSR), RequireAuth (JWT), RateLimit (por IP), LocalhostOnly, compressão gzip.
 
 ### Security / CSRF
 CSRF automático em POST/PUT/PATCH/DELETE via cookie + field hidden ou header `X-CSRF-Token`.
@@ -95,7 +95,10 @@ mesmo estilo da página de boas-vindas. Acesso exige `IsStaff`/`IsAdmin`,
 verificado a cada requisição; hash nunca é exibido; CSRF e brute-force
 protegidos pelos mesmos mecanismos globais do framework. Sem nenhum banco
 configurado, cria sozinho um SQLite local em `database/` (só em development —
-nunca em produção) e já gera as tabelas necessárias.
+nunca em produção) e já gera as tabelas necessárias. `ADMIN_SUPERUSER_USERNAME`/
+`ADMIN_SUPERUSER_PASSWORD` no `.env` criam o superusuário inicial no boot, se
+ainda não existir ninguém com esse login — nunca redefinem a senha de uma
+conta já existente.
 
 ### Errors
 Páginas de erro customizáveis. Debug page com stack trace em desenvolvimento.
@@ -115,6 +118,7 @@ go run main.go createsuperuser      # cria usuário is_admin + is_staff interati
 go run main.go createuser           # cria usuário comum interativamente
 go run main.go removemigration 0003        # remove migration do disco
 go run main.go removemigration 0003 all    # executa down, remove do banco e do disco
+go run main.go benchmark            # roda os testes de performance e salva o resultado em benchmark/
 ```
 
 
@@ -158,6 +162,11 @@ QUEUE_WORKERS=4
 # ── Admin (painel opt-in por model — precisa de admin.Register[T] no código)
 ADMIN_ENABLED=false
 ADMIN_PATH=/admin/
+
+# Opcional — cria o superusuário inicial no boot, se ainda não existir
+# ninguém com esse login (não redefine senha de conta já existente)
+# ADMIN_SUPERUSER_USERNAME=admin
+# ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 
 # ── Segurança (obrigatórios em production) ────────────────────────
 SECRET_KEY=sua-chave-secreta-forte-aqui     # mínimo 32 chars
@@ -246,6 +255,12 @@ Importe o driver com blank identifier em `main.go`:
 import _ "github.com/lib/pq"
 ```
 
+> `modernc.org/sqlite` é sempre uma dependência do framework, mesmo sem
+> importá-lo — é usado internamente pelo fallback do Admin (veja acima),
+> nunca em conexões que você mesmo configura. Para usar SQLite como seu
+> próprio `DB_DRIVER`, o import acima continua sendo sua responsabilidade
+> (torna explícito no seu `main.go` que o projeto depende dele).
+
 
 ## FLUXO DO SISTEMA
 ```
@@ -273,6 +288,11 @@ GET /busca/?q=...  (query str)   109.302 req/s    0,915 ms    0 erros
 
 Percentis (P50/P90/P95/P99/P100): 0,89 / 1,34 / 1,72 / 2,44 / 6,36 ms.
 Zero falhas em 200.000 requisições totais.
+
+> Números de uma medição pontual (hardware/carga da máquina influenciam o
+> resultado) — trate como ordem de grandeza, não benchmark oficial. Para
+> números reproduzíveis no seu próprio hardware: `go run main.go benchmark`
+> (roda as 3 camadas de teste do framework e salva o resultado em `benchmark/`).
 
 
 ## CONCEITO CHAVE

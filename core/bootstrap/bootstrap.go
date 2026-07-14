@@ -189,6 +189,17 @@ func Init(envPath string) (*Framework, error) {
 				log.Printf("bootstrap: erro ao preparar tabelas dos models do admin no SQLite de desenvolvimento: %v\n", err)
 			}
 		}
+		// ADMIN_SUPERUSER_USERNAME/PASSWORD são opcionais — só criam a conta
+		// na PRIMEIRA vez (nunca redefinem senha de uma conta já existente),
+		// evitando reset silencioso a cada reinício em dev com hot reload.
+		if dbm.Use() != nil && cfg.Admin.SuperuserUsername != "" && cfg.Admin.SuperuserPassword != "" {
+			created, err := auth.EnsureSuperuser(dbm.Use(), cfg.Admin.SuperuserUsername, cfg.Admin.SuperuserPassword)
+			if err != nil {
+				log.Printf("bootstrap: falha ao garantir superusuário via ADMIN_SUPERUSER_USERNAME/PASSWORD: %v\n", err)
+			} else if created {
+				log.Printf("bootstrap: superusuário '%s' criado a partir do .env (ADMIN_SUPERUSER_USERNAME/PASSWORD)\n", cfg.Admin.SuperuserUsername)
+			}
+		}
 		admin.Mount(r, dbm, store, cfg.Admin.Path, cfg.App.Name, cfg.App.Version)
 	}
 

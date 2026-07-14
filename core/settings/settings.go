@@ -55,6 +55,13 @@ type QueueSettings struct {
 type AdminSettings struct {
 	Enabled bool
 	Path    string // ex: "/admin/" — sempre com barra final
+
+	// SuperuserUsername/SuperuserPassword criam o superusuário inicial no
+	// boot, se ainda não existir ninguém com esse login — vazio desativa o
+	// recurso. Nunca redefinem a senha de uma conta já existente (ver
+	// auth.EnsureSuperuser).
+	SuperuserUsername string
+	SuperuserPassword string
 }
 
 type SecuritySettings struct {
@@ -144,8 +151,10 @@ func Load() *Settings {
 			Workers: intOr(environment.Get("QUEUE_WORKERS"), 4),
 		},
 		Admin: AdminSettings{
-			Enabled: environment.GetOr("ADMIN_ENABLED", "false") == "true",
-			Path:    environment.GetOr("ADMIN_PATH", "/admin/"),
+			Enabled:           environment.GetOr("ADMIN_ENABLED", "false") == "true",
+			Path:              environment.GetOr("ADMIN_PATH", "/admin/"),
+			SuperuserUsername: environment.Get("ADMIN_SUPERUSER_USERNAME"),
+			SuperuserPassword: environment.Get("ADMIN_SUPERUSER_PASSWORD"),
 		},
 		Security: SecuritySettings{
 			SecretKey:     environment.GetOr("SECRET_KEY", "change-me"),

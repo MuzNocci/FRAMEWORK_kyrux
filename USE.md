@@ -37,7 +37,7 @@ Criado por Müller Nocciolli · [www.kyrux.com.br/docs](https://www.kyrux.com.br
 ### Pré-requisitos
 
 ```bash
-go 1.22+
+go 1.26.2+   # versão mínima exigida pelo go.mod do framework
 ```
 
 ### Instalar o Air (hot reload — apenas uma vez)
@@ -128,6 +128,21 @@ DB_DSN=postgres://user:password@localhost:5432/meudb?sslmode=disable
 CACHE_ENABLED=false
 CACHE_DRIVER=memory
 CACHE_ADDR=localhost:6379
+
+# ── Queue (fila de tarefas em background) ─────────────────────────
+QUEUE_ENABLED=false
+QUEUE_DRIVER=memory     # memory | redis (roadmap)
+QUEUE_ADDR=localhost:6379
+QUEUE_WORKERS=4
+
+# ── Admin (painel opt-in por model — precisa de admin.Register[T] no código)
+ADMIN_ENABLED=false
+ADMIN_PATH=/admin/
+
+# Opcional — cria o superusuário inicial no boot, se ainda não existir
+# ninguém com esse login (não redefine senha de conta já existente)
+# ADMIN_SUPERUSER_USERNAME=admin
+# ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 
 # ── Segurança ─────────────────────────────────────────────────────
 SECRET_KEY=sua-chave-secreta-forte-aqui
@@ -239,6 +254,18 @@ go run main.go removemigration 0003 all    # remove do disco + da tabela kyrux_m
 
 Remove a migration pelo número (prefixo `NNNN`). A variante `all` requer `DB_ENABLED=true`.
 Útil para corrigir uma migration gerada com erro antes de aplicá-la em produção.
+
+### Rodar os benchmarks do framework
+
+```bash
+go run main.go benchmark
+```
+
+Roda as camadas de teste de performance descritas na [seção 22](#22-performance)
+em sequência (microbenchmark, framework sem TCP, regressão e throughput real) e
+salva a saída completa em `benchmark/benchmark_AAAA-MM-DD_HH-MM-SS.txt`, junto
+com a versão do Go e o modelo de CPU detectado. Atalho para não digitar os
+comandos `go test` de cada camada manualmente.
 
 ---
 
@@ -641,31 +668,34 @@ csrf.Exempt("/api/")
 
 Registrados no `bootstrap` — já ativos por padrão:
 
-| Middleware        | Descrição                                              |
-|-------------------|--------------------------------------------------------|
-| `Recovery()`      | Captura panics — mostra debug page (dev) ou 500 (prod) |
-| `AllowedHosts()`  | Bloqueia hosts não autorizados (ignorado em dev)       |
-| `csrf.Middleware` | Valida token CSRF em métodos não seguros               |
+| Middleware          | Descrição                                                    |
+|---------------------|---------------------------------------------------------------|
+| `Recovery()`        | Captura panics — mostra debug page (dev) ou 500 (prod)        |
+| `MaxBodySize(32MB)` | Limita o tamanho do body — defesa contra payloads gigantes    |
+| `SecureHeaders`     | HSTS, X-Frame-Options, CSP — **apenas em production** (`APP_ENV=development` não ativa) |
+| `AllowedHosts()`    | Bloqueia hosts não autorizados (ignorado em dev)              |
+| `csrf.Middleware`   | Valida token CSRF em métodos não seguros                      |
 
 ### Middlewares opcionais
 
 | Middleware | Uso | Descrição |
 |---|---|---|
-| `Compress` | `r.Use(middleware.Compress)` | Compressão gzip das respostas |
+| `Compress` | `r.Use(compress.Compress)` | Compressão gzip das respostas |
 | `CORS(origins)` | `r.Use(secmiddleware.CORS(...))` | Cabeçalhos CORS para as origens permitidas |
-| `SecureHeaders` | `r.Use(secmiddleware.SecureHeaders)` | HSTS, X-Frame-Options, CSP (produção) |
 | `RequireAuth(a)` | por rota ou global | Exige Bearer token JWT — APIs stateless |
 | `RequireLogin(store, url)` | por rota ou global | Exige sessão ativa — views SSR; redireciona para `url` se não autenticado |
 | `RateLimit(max, janela)` | por rota (recomendado no login) | Máximo de `max` requisições por IP por janela; excedentes recebem 429 |
+| `LocalhostOnly` | por rota (ex: dashboards internos) | 403 para qualquer IP que não seja loopback — é o que protege `/kyrux/debug/` |
+| `MaxBodySize(n)` | por rota, além do global de 32MB | Limite específico menor (ou maior) para uma rota (ex: upload) |
 
 ```go
 import (
-    "kyrux/core/middleware"
+    "kyrux/core/compress"
     secmiddleware "kyrux/core/security/middleware"
 )
 
 // Compressão gzip
-r.Use(middleware.Compress)
+r.Use(compress.Compress)
 
 // CORS
 r.Use(secmiddleware.CORS([]string{"https://meusite.com.br"}))
@@ -769,8 +799,8 @@ func MinhaView(fw *bootstrap.Framework) router.HandlerFunc {
         dbAnalytics := fw.DB.Use("analytics")    // banco cujo DB_NAME=analytics
         dbLegado    := fw.DB.Use("legado")        // banco cujo DB_NAME=legado
 
-        posts, err := orm.From[models.Post](db).All()
-        stats, err := orm.From[models.Stat](dbAnalytics).All()
+        posts, err := orm.FromDB[models.Post](db).All()
+        stats, err := orm.FromDB[models.Stat](dbAnalytics).All()
         _ = dbLegado
     }
 }
@@ -1013,6 +1043,8 @@ type Cliente struct {
 | `kyrux:"hash"` | Hash automático **Argon2id+pepper** na escrita (Create/Update). Nunca revertido. |
 | `kyrux:"encrypt"` | **AES-256-GCM** — cifra na escrita, decifra automaticamente na leitura. Requer `FIELD_ENCRYPTION_KEY`. |
 | `kyrux:"login"` | Exclusivo do `auth.User`. Marca o campo de login (username ou email). Apenas um campo por struct. Imutável após o primeiro migrate. |
+| `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo `Update` (ex: `updated_at`). Também preenche no `Create` se o campo estiver zerado. |
+| `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration. A tabela referenciada precisa existir antes (declare-a primeiro ou em migration anterior). |
 
 > **`default:valor`** — quando o campo tiver valor zero Go (`""`, `0`, `false`),
 > o ORM usa o literal diretamente no SQL (`VALUES (..., NOW(), ...)`), sem passar como argumento.
@@ -1030,6 +1062,19 @@ Gerado automaticamente a partir do nome do struct em `snake_case` plural:
 | `UserProfile` | `user_profiles` |
 | `Address` | `addresses` |
 
+### `From` vs `FromDB`
+
+| Função | Recebe | Uso |
+|---|---|---|
+| `orm.From[T](connName string)` | Nome da conexão registrada (`"default"`, `"analytics"`, ...) | Quando você só tem o nome da conexão em mãos, sem `fw.DB` por perto. |
+| `orm.FromDB[T](db *database.DB)` | Uma conexão já resolvida (`fw.DB.Use()`, `fw.DB.Use("analytics")`, com ou sem `WithSchema`) | O padrão usado em toda esta seção — o que views e funções em `models/` normalmente recebem. |
+
+`orm.From[T]("default")` e `orm.FromDB[T](fw.DB.Use())` chegam ao mesmo lugar —
+`From` só resolve o nome para uma `*database.DB` internamente e delega para
+`FromDB`. Passar uma `*database.DB` para `From` (ou uma string para `FromDB`)
+não compila — são assinaturas diferentes; escolha conforme o que você já tem
+em mãos.
+
 ### Leitura
 
 #### All — buscar todos
@@ -1037,10 +1082,10 @@ Gerado automaticamente a partir do nome do struct em `snake_case` plural:
 ```go
 db := fw.DB.Use()
 
-posts, err := orm.From[Post](db).All()
+posts, err := orm.FromDB[Post](db).All()
 
 // Com filtros
-posts, err := orm.From[Post](db).
+posts, err := orm.FromDB[Post](db).
     Where("publicado = ?", true).
     OrderBy("criado_em DESC").
     Limit(10).
@@ -1053,7 +1098,7 @@ posts, err := orm.From[Post](db).
 Retorna `sql.ErrNoRows` se nenhuma linha for encontrada.
 
 ```go
-post, err := orm.From[Post](db).
+post, err := orm.FromDB[Post](db).
     Where("slug = ?", slug).
     First()
 
@@ -1066,9 +1111,9 @@ if errors.Is(err, sql.ErrNoRows) {
 #### Count — contar linhas
 
 ```go
-total, err := orm.From[Post](db).Count()
+total, err := orm.FromDB[Post](db).Count()
 
-publicados, err := orm.From[Post](db).
+publicados, err := orm.FromDB[Post](db).
     Where("publicado = ?", true).
     Count()
 ```
@@ -1082,6 +1127,7 @@ publicados, err := orm.From[Post](db).
 | `WhereIn(col string, vals ...any)` | `col IN (...)` com expansão de placeholders. Aceita slice: `WhereIn("id", ids)`. Lista vazia = nenhum resultado. |
 | `OrderBy(cols ...string)` | Define `ORDER BY` — múltiplas colunas: `OrderBy("criado_em DESC", "id ASC")`. |
 | `Join(tabela, on)` / `LeftJoin(tabela, on)` | JOIN para **filtrar** pela tabela relacionada. O SELECT vira `tabela_base.*` — o resultado continua `[]T`. |
+| `Select(cols ...string)` | Restringe as colunas do `SELECT` (padrão: `SELECT *`). Colunas fora da lista ficam com zero value no struct — não use para depois `Update` o registro inteiro de volta. |
 | `Distinct()` | `SELECT DISTINCT`. |
 | `Limit(n int)` | Máximo de linhas retornadas. |
 | `Offset(n int)` | Linhas a pular — use com `Limit` para paginação. |
@@ -1131,7 +1177,7 @@ err := orm.CreateAll(db, posts)
 Exige ao menos um `Where` para evitar updates acidentais em toda a tabela.
 
 ```go
-err := orm.From[Post](db).
+err := orm.FromDB[Post](db).
     Where("id = ?", 1).
     Update(map[string]any{
         "titulo":    "Título atualizado",
@@ -1144,7 +1190,7 @@ err := orm.From[Post](db).
 Exige ao menos um `Where` para evitar deleções acidentais em toda a tabela.
 
 ```go
-err := orm.From[Post](db).
+err := orm.FromDB[Post](db).
     Where("id = ?", 1).
     Delete()
 ```
@@ -1156,7 +1202,7 @@ err := orm.From[Post](db).
 ```go
 page := ctx.QueryInt("page", 1)
 
-p, err := orm.From[Post](db).
+p, err := orm.FromDB[Post](db).
     Where("publicado = ?", true).
     OrderBy("criado_em DESC").
     Paginate(page, 20) // página atual, itens por página
@@ -1179,7 +1225,7 @@ Para tabelas grandes e feeds infinitos, `PaginateNoCount` evita o `COUNT(*)`
 `Total` fica em `-1` e `TotalPages` em `0` (desconhecidos):
 
 ```go
-p, err := orm.From[Post](db).OrderBy("id DESC").PaginateNoCount(page, 20)
+p, err := orm.FromDB[Post](db).OrderBy("id DESC").PaginateNoCount(page, 20)
 ```
 
 ### Relações: filtrar com Join, carregar com Prefetch
@@ -1191,7 +1237,7 @@ colunas (qualifique as colunas do `Where`):
 
 ```go
 // Posts de usuários ativos:
-posts, _ := orm.From[Post](db).
+posts, _ := orm.FromDB[Post](db).
     Join("users", "users.id = posts.user_id").
     Where("users.is_active = ?", true).
     All()
@@ -1202,7 +1248,7 @@ explícito do `prefetch_related` do Django (1 query + agrupamento em memória,
 sem N+1):
 
 ```go
-posts, _ := orm.From[Post](db).All()
+posts, _ := orm.FromDB[Post](db).All()
 ids := make([]int64, len(posts))
 for i, p := range posts { ids[i] = p.ID }
 
@@ -1240,7 +1286,7 @@ No template:
 db := fw.DB.Use().WithSchema("tenant_" + tenantID)
 
 // Todas as queries usam o schema automaticamente
-posts, _ := orm.From[Post](db).Where("publicado = ?", true).All()
+posts, _ := orm.FromDB[Post](db).Where("publicado = ?", true).All()
 // → SELECT * FROM tenant_abc.posts WHERE publicado = ?
 
 post := Post{Titulo: "Novo"}
@@ -1277,14 +1323,14 @@ type Post struct {
 }
 
 func ListarPublicados(db *database.DB) ([]Post, error) {
-    return orm.From[Post](db).
+    return orm.FromDB[Post](db).
         Where("publicado = ?", true).
         OrderBy("id DESC").
         All()
 }
 
 func BuscarPorID(db *database.DB, id int64) (*Post, error) {
-    return orm.From[Post](db).
+    return orm.FromDB[Post](db).
         Where("id = ?", id).
         First()
 }
@@ -1873,6 +1919,36 @@ comportamento depende do ambiente:
 > `makemigrations`/`migrate`; o fallback é para começar rápido, não para
 > acompanhar mudanças de schema ao longo do tempo.
 
+### Superusuário inicial
+
+Duas formas de criar o primeiro usuário com acesso ao admin:
+
+1. **Interativa** — `go run main.go createsuperuser` (ver [seção 4](#4-cli--comandos)).
+2. **Via `.env`** — defina as duas variáveis abaixo; o Kyrux cria a conta
+   sozinho no próximo boot, **somente se ainda não existir ninguém com esse
+   login**:
+
+```env
+ADMIN_SUPERUSER_USERNAME=admin
+ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
+```
+
+- O valor de `ADMIN_SUPERUSER_USERNAME` é gravado no campo marcado com
+  `kyrux:"login"` no model `auth.User` — `Username` ou `Email`, conforme a
+  tag (ver [seção 15](#15-autenticação)). O nome da variável não muda mesmo
+  quando o campo de login é `Email`.
+- **Nunca redefine a senha de uma conta já existente** — mesmo que você
+  edite `ADMIN_SUPERUSER_PASSWORD` depois e reinicie o servidor (Air
+  recompila e reinicia a cada save; sem essa proteção, um `.env` esquecido
+  resetaria a senha a cada hot reload). Para trocar a senha depois de criada,
+  use o próprio `/admin/` ou `go run main.go createsuperuser`/`createuser`.
+- Senha com menos de 8 caracteres é rejeitada (a criação falha e o log
+  explica o motivo — nenhuma conta é criada).
+- Funciona com qualquer banco, inclusive o SQLite de fallback acima —
+  nesse caso a tabela de `auth.User` já existe antes desta checagem rodar.
+- Deixe as duas variáveis vazias (padrão) para desativar — nada acontece no
+  boot, use `createsuperuser` normalmente.
+
 ### Segurança
 
 - **Acesso exige `IsStaff` ou `IsAdmin`** no model `auth.User` — verificado a
@@ -1914,6 +1990,12 @@ comportamento depende do ambiente:
 Relações e filtros avançados ficam de fora por design nesta primeira versão —
 o objetivo é um CRUD sólido e seguro sobre um model por vez, não replicar toda
 a superfície do Django admin.
+
+> `admin.Mount`, `admin.EnsureAllTables` e `admin.Count` são exportadas mas de
+> uso interno — `bootstrap.Init()` já as chama sozinho na ordem certa (depois
+> que os apps registraram seus models, antes de montar as rotas). Código de
+> app não precisa (nem deve) chamá-las diretamente; a única API voltada para
+> o desenvolvedor é `admin.Register[T]` e suas opções.
 
 ---
 
@@ -1992,6 +2074,12 @@ Zero falhas em 200.000 requisições totais.
 | P95 | 1,72 ms |
 | P99 | 2,44 ms |
 | P100 (pior caso) | 6,36 ms |
+
+> Medição pontual num hardware específico — trate como ordem de grandeza, não
+> como benchmark oficial reproduzível em qualquer máquina. Para números atuais
+> no seu próprio ambiente: `go run main.go benchmark` (roda as 3 camadas de
+> teste do framework — microbenchmark, framework sem TCP e throughput real —
+> e salva o resultado em `benchmark/`).
 
 ### Benchmarks Go nativos — `testing.B` (GOMAXPROCS=4, sem TCP overhead)
 
@@ -2157,13 +2245,13 @@ ctx.Params                     // map[string]string
 
 ```go
 // Leitura
-orm.From[T](db).All()                          // ([]T, error)
-orm.From[T](db).Each(func(t *T) error {...})   // streaming, memória O(1)
-orm.From[T](db).First()                        // (*T, error) — sql.ErrNoRows se vazio
-orm.From[T](db).Last()                         // (*T, error) — ordenação invertida
-orm.From[T](db).Exists()                       // (bool, error)
-orm.From[T](db).Count()                        // (int64, error)
-orm.From[T](db).Sum("col")                     // (float64, error) — também Avg/Min/Max
+orm.FromDB[T](db).All()                          // ([]T, error)
+orm.FromDB[T](db).Each(func(t *T) error {...})   // streaming, memória O(1)
+orm.FromDB[T](db).First()                        // (*T, error) — sql.ErrNoRows se vazio
+orm.FromDB[T](db).Last()                         // (*T, error) — ordenação invertida
+orm.FromDB[T](db).Exists()                       // (bool, error)
+orm.FromDB[T](db).Count()                        // (int64, error)
+orm.FromDB[T](db).Sum("col")                     // (float64, error) — também Avg/Min/Max
 
 // Filtros encadeáveis (retornam *Query[T])
 .Where("col = ?", val)
@@ -2172,6 +2260,7 @@ orm.From[T](db).Sum("col")                     // (float64, error) — também A
 .Join("users", "users.id = posts.user_id")     // filtro por relação
 .LeftJoin("users", "users.id = posts.user_id")
 .OrderBy("col DESC", "id")    // múltiplas colunas
+.Select("id", "titulo")       // restringe colunas do SELECT (padrão: *)
 .Distinct()
 .Limit(n)
 .Offset(n)
@@ -2181,18 +2270,18 @@ orm.Prefetch[Comentario](db, "post_id", ids, func(c *Comentario) int64 { return 
 // → (map[int64][]Comentario, error)
 
 // Paginação
-orm.From[T](db).Where(...).OrderBy("id DESC").Paginate(page, 20)
-orm.From[T](db).OrderBy("id DESC").PaginateNoCount(page, 20) // sem COUNT(*)
+orm.FromDB[T](db).Where(...).OrderBy("id DESC").Paginate(page, 20)
+orm.FromDB[T](db).OrderBy("id DESC").PaginateNoCount(page, 20) // sem COUNT(*)
 // → (Page[T], error)
 // Page[T]: Items, Total, Page, PageSize, TotalPages, HasNext, HasPrev
 
 // Escrita
 orm.Create(db, &model)                         // error — preenche PK
 orm.CreateAll(db, []*T{...})                   // bulk: um INSERT multi-VALUES
-orm.From[T](db).Where(...).Update(map[string]any{...}) // error
-orm.From[T](db).Where(...).Delete()            // error
-orm.From[T](db).Where(...).GetOrCreate(&defaults)      // (*T, created, error)
-orm.From[T](db).Where(...).UpdateOrCreate(values, &defaults) // (created, error)
+orm.FromDB[T](db).Where(...).Update(map[string]any{...}) // error
+orm.FromDB[T](db).Where(...).Delete()            // error
+orm.FromDB[T](db).Where(...).GetOrCreate(&defaults)      // (*T, created, error)
+orm.FromDB[T](db).Where(...).UpdateOrCreate(values, &defaults) // (created, error)
 
 // Transações (atômico — commit/rollback automático)
 fw.DB.Use().Transaction(func(tx *database.Tx) error {
@@ -2202,7 +2291,7 @@ fw.DB.Use().Transaction(func(tx *database.Tx) error {
 
 // Multi-tenant
 db := fw.DB.Use().WithSchema("tenant_abc")
-orm.From[T](db).All()  // → SELECT * FROM tenant_abc.tabela
+orm.FromDB[T](db).All()  // → SELECT * FROM tenant_abc.tabela
 ```
 
 ### ORM — tags do model
@@ -2217,6 +2306,8 @@ orm.From[T](db).All()  // → SELECT * FROM tenant_abc.tabela
 | `kyrux:"hash"` | Hash Argon2id+pepper automático na escrita; nunca revertido |
 | `kyrux:"encrypt"` | AES-256-GCM: cifra na escrita, decifra na leitura |
 | `kyrux:"login"` | Exclusivo do `auth.User` — define o campo de login; imutável após migrate |
+| `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo Update; preenche no Create se zerado |
+| `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration |
 
 ### Auth — todos os métodos
 
