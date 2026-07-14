@@ -1,5 +1,6 @@
 # Environment
 .env
+.env copy
 
 # Development
 .claude
@@ -49,5 +50,8 @@ Thumbs.db
 /medias/*
 !/medias/.gitkeep
 
+# Database — migrations locais e o SQLite de fallback do admin
+# (database/kyrux.sqlite3, criado automaticamente só em development quando
+# ADMIN_ENABLED=true e nenhum banco está configurado)
 /database/*
 /database/
