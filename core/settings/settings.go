@@ -15,6 +15,7 @@ type Settings struct {
 	Databases     []DatabaseSettings // todos os bancos configurados
 	Cache         CacheSettings
 	Queue         QueueSettings
+	Admin         AdminSettings
 	Security      SecuritySettings
 }
 
@@ -49,6 +50,11 @@ type QueueSettings struct {
 	Driver  string // memory | redis (roadmap)
 	Addr    string // endereço do broker quando driver != memory
 	Workers int
+}
+
+type AdminSettings struct {
+	Enabled bool
+	Path    string // ex: "/admin/" — sempre com barra final
 }
 
 type SecuritySettings struct {
@@ -136,6 +142,10 @@ func Load() *Settings {
 			Driver:  environment.GetOr("QUEUE_DRIVER", "memory"),
 			Addr:    environment.Get("QUEUE_ADDR"),
 			Workers: intOr(environment.Get("QUEUE_WORKERS"), 4),
+		},
+		Admin: AdminSettings{
+			Enabled: environment.GetOr("ADMIN_ENABLED", "false") == "true",
+			Path:    environment.GetOr("ADMIN_PATH", "/admin/"),
 		},
 		Security: SecuritySettings{
 			SecretKey:     environment.GetOr("SECRET_KEY", "change-me"),

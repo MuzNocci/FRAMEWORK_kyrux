@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"kyrux/core/admin"
 	"kyrux/core/bootstrap/assets"
 	"kyrux/core/bootstrap/welcome"
 	"kyrux/core/cache"
@@ -144,6 +145,13 @@ func Init(envPath string) (*Framework, error) {
 
 	assets.Register(r)
 	welcome.RegisterIfNeeded(r)
+
+	// Monta /admin/ apenas se ao menos um model foi registrado via
+	// admin.Register (feito pelos apps acima) E ADMIN_ENABLED=true —
+	// os dois portões precisam estar abertos (opt-in em código + config).
+	if cfg.Admin.Enabled {
+		admin.Mount(r, dbm, store, cfg.Admin.Path, cfg.App.Name, cfg.App.Version)
+	}
 
 	r.Internal("GET /kyrux/websocket/ws/", func(ctx *router.Context) {
 		hub.ServeHTTP(ctx.Writer, ctx.Request)

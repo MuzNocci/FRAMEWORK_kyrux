@@ -1,0 +1,11 @@
+{{define "content"}}
+<div class="page-head"><h1>Painel</h1></div>
+<div class="cards">
+  {{range .Models}}
+  <a href="{{$.BasePath}}{{.Slug}}/" class="model-card">
+    <h3>{{.Label}}</h3>
+    <p>/{{.Slug}}/</p>
+  </a>
+  {{end}}
+</div>
+{{end}}

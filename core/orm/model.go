@@ -32,6 +32,11 @@ type ModelMeta struct {
 
 var metaCache sync.Map // map[reflect.Type]*ModelMeta
 
+// MetaOf retorna os metadados computados (cacheados) do model T — nomes de
+// coluna, tags kyrux, chave primária. Usado por ferramentas que precisam
+// introspectar models em runtime (ex: o admin).
+func MetaOf[T any]() *ModelMeta { return metaOf[T]() }
+
 // metaOf retorna o ModelMeta cacheado para o tipo T.
 func metaOf[T any]() *ModelMeta {
 	var zero T

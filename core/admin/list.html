@@ -1,0 +1,51 @@
+{{define "content"}}
+<div class="page-head">
+  <h1>{{.Label}} <span class="count">{{.Total}}</span></h1>
+  <a href="{{.NewURL}}" class="btn btn-primary">+ Novo</a>
+</div>
+
+{{if .Searchable}}
+<form method="GET" class="toolbar">
+  <input class="search-input" type="text" name="q" value="{{.Search}}" placeholder="Buscar...">
+  <button type="submit" class="btn btn-ghost btn-sm">Buscar</button>
+  {{if .Search}}<a href="{{.ClearURL}}" class="btn btn-ghost btn-sm">Limpar</a>{{end}}
+</form>
+{{end}}
+
+<div class="panel">
+{{if .Rows}}
+<div style="overflow-x:auto">
+<table class="table">
+<thead><tr>
+  {{range .Columns}}<th>{{if .SortURL}}<a href="{{.SortURL}}">{{.Label}}{{if .SortActive}}{{if .SortDesc}} &#8595;{{else}} &#8593;{{end}}{{end}}</a>{{else}}{{.Label}}{{end}}</th>{{end}}
+  <th></th>
+</tr></thead>
+<tbody>
+{{range $row := .Rows}}
+<tr>
+  {{range $col := $.Columns}}<td><a class="cell-link" href="{{$.BasePath}}{{$.Slug}}/{{$row.PK}}/">{{index $row.Values $col.Column}}</a></td>{{end}}
+  <td class="actions">
+    <form method="POST" action="{{$.BasePath}}{{$.Slug}}/{{$row.PK}}/excluir/" class="js-confirm-delete" style="display:inline">
+      <input type="hidden" name="{{$.CSRFField}}" value="{{$.CSRFToken}}">
+      <button type="submit" class="btn btn-danger btn-sm">Excluir</button>
+    </form>
+  </td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+<div class="pagination">
+  <span>Página {{.Page}} de {{.TotalPages}}</span>
+  <div>
+    {{if .HasPrev}}<a href="{{.PrevURL}}">&#8592; Anterior</a>{{else}}<span class="disabled">&#8592; Anterior</span>{{end}}
+    &nbsp;&middot;&nbsp;
+    {{if .HasNext}}<a href="{{.NextURL}}">Próxima &#8594;</a>{{else}}<span class="disabled">Próxima &#8594;</span>{{end}}
+  </div>
+</div>
+{{else}}
+<div class="empty">Nenhum registro encontrado.</div>
+{{end}}
+</div>
+<script src="{{.BasePath}}statics/admin.js" defer></script>
+{{end}}

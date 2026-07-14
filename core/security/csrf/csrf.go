@@ -65,6 +65,11 @@ func secretKey() []byte {
 	panic("csrf: SECRET_KEY não configurado — defina no .env ou chame csrf.SetSecret() no bootstrap")
 }
 
+// FieldName devolve o nome do campo hidden usado para submeter o token CSRF
+// em formulários — use para montar forms fora do engine de templates padrão
+// (ex: `<input type="hidden" name="` + csrf.FieldName() + `" value="...">`).
+func FieldName() string { return fieldName }
+
 // TokenFor devolve o token CSRF assinado da requisição atual — o mesmo valor
 // que {{ csrf_token }} injeta no form. Útil para expor o token em respostas
 // JSON. A assinatura é computada lazy e cacheada no ctx (uma vez por request).

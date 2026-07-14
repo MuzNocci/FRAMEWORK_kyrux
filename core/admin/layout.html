@@ -1,0 +1,51 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{.PageTitle}} | {{.AppName}} Admin</title>
+<link rel="stylesheet" href="{{.BasePath}}statics/admin.css">
+</head>
+<body>
+<header>
+  <img src="/kyrux/statics/kyrux_wt.png" class="logo-img" alt="Kyrux">
+  <span class="version">v{{.Version}}</span>
+  {{if .User}}
+  <div class="header-right">
+    <a href="/">&#8592; Voltar ao site</a>
+    <span>{{.User}}</span>
+    <form method="POST" action="{{.BasePath}}logout/" style="display:inline">
+      <input type="hidden" name="{{.CSRFField}}" value="{{.CSRFToken}}">
+      <button type="submit" class="btn btn-ghost btn-sm">Sair</button>
+    </form>
+  </div>
+  {{end}}
+</header>
+{{if .User}}
+<div class="admin-shell">
+  <nav class="admin-sidebar">
+    <div class="admin-nav-sep">Models</div>
+    {{range .Models}}
+    <a href="{{$.BasePath}}{{.Slug}}/" class="admin-nav-item{{if eq .Slug $.ActiveSlug}} active{{end}}">{{.Label}}</a>
+    {{end}}
+  </nav>
+  <main>
+    {{if .FlashError}}<div class="alert alert-error">{{.FlashError}}</div>{{end}}
+    {{if .FlashSuccess}}<div class="alert alert-success">{{.FlashSuccess}}</div>{{end}}
+    {{template "content" .}}
+  </main>
+</div>
+{{else}}
+{{template "content" .}}
+{{end}}
+<footer>
+  Kyrux Framework &mdash; construído com <a href="https://go.dev" target="_blank">Go</a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://www.kyrux.com.br/docs/" target="_blank">Documentação</a>
+  &nbsp;&middot;&nbsp;
+  desenvolvido por <a href="https://www.nocciolli.com.br" target="_blank">M&uuml;ller Nocciolli</a>
+</footer>
+</body>
+</html>
+{{end}}

@@ -88,6 +88,13 @@ WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/App
 (broadcast global) e variantes `*For` com escopo de sessão para conteúdo por usuário.
 Ping/pong automático e reconexão com backoff no cliente.
 
+### Admin
+Painel de administração opt-in por model (`admin.Register[T]`) — um site só
+para todos os apps, mas nada aparece nele sem registro explícito. Layout no
+mesmo estilo da página de boas-vindas. Acesso exige `IsStaff`/`IsAdmin`,
+verificado a cada requisição; hash nunca é exibido; CSRF e brute-force
+protegidos pelos mesmos mecanismos globais do framework.
+
 ### Errors
 Páginas de erro customizáveis. Debug page com stack trace em desenvolvimento.
 
@@ -145,6 +152,10 @@ QUEUE_ENABLED=false
 QUEUE_DRIVER=memory          # memory | redis (roadmap)
 QUEUE_ADDR=localhost:6379
 QUEUE_WORKERS=4
+
+# ── Admin (painel opt-in por model — precisa de admin.Register[T] no código)
+ADMIN_ENABLED=false
+ADMIN_PATH=/admin/
 
 # ── Segurança (obrigatórios em production) ────────────────────────
 SECRET_KEY=sua-chave-secreta-forte-aqui     # mínimo 32 chars

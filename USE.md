@@ -26,8 +26,9 @@ Criado por Müller Nocciolli · [www.kyrux.com.br/docs](https://www.kyrux.com.br
 17. [Realtime (DOM sem JS)](#17-realtime-dom-sem-js)
 18. [Páginas de Erro](#18-páginas-de-erro)
 19. [Debug Dashboard](#19-debug-dashboard)
-20. [Fluxo do Sistema](#20-fluxo-do-sistema)
-21. [Performance](#21-performance)
+20. [Admin (Painel de Administração)](#20-admin-painel-de-administração)
+21. [Fluxo do Sistema](#21-fluxo-do-sistema)
+22. [Performance](#22-performance)
 
 ---
 
@@ -1791,7 +1792,90 @@ O status é verificado via `Ping` com timeout de 2 segundos a cada acesso ao das
 
 ---
 
-## 20. Fluxo do Sistema
+## 20. Admin (Painel de Administração)
+
+Um único painel (`/admin/`) para todos os apps — mas **nenhum model aparece nele
+por padrão**. Diferente do admin do Django, o Kyrux não expõe nada
+automaticamente: sem `admin.Register`, `/admin/` nem é montado. O layout segue
+o mesmo estilo visual da página de boas-vindas do framework (mesma paleta,
+header e rodapé) — os templates são embutidos, mas o código é seu: copie e
+adapte se quiser uma cara própria.
+
+### Ativar
+
+Dois portões precisam estar abertos — o `.env` (kill-switch global) e o
+código (opt-in por model):
+
+```env
+ADMIN_ENABLED=true
+ADMIN_PATH=/admin/    # opcional — renomear dificulta descoberta por scanners
+```
+
+```go
+// No Register() do app, depois de importar o model:
+import "kyrux/core/admin"
+
+func Register(r *router.Router, fw *bootstrap.Framework) {
+    // ...
+
+    admin.Register[models.Produto]("produtos", "Produtos",
+        admin.SearchFields("Nome"),        // opcional — campos de busca (LIKE)
+        admin.ListFields("Nome", "Preco"), // opcional — colunas da listagem
+        admin.Conn("analytics"),           // opcional — outra conexão nomeada
+    )
+}
+```
+
+`Register[T]` exige que o model tenha um campo `kyrux:"pk"` — falha no boot
+(panic) se não tiver, junto com slug inválido/duplicado/reservado (`login`,
+`logout`). Sem `ListFields`, a listagem mostra todos os campos exceto os
+marcados `kyrux:"hash"` (nunca exibidos, em lugar nenhum). Sem `SearchFields`,
+a busca fica desativada para aquele model.
+
+### Segurança
+
+- **Acesso exige `IsStaff` ou `IsAdmin`** no model `auth.User` — verificado a
+  **cada requisição**, não apenas no login. Revogar `IsStaff` de um usuário
+  encerra o acesso na próxima requisição, mesmo com a sessão ainda válida.
+- **Login válido não implica acesso.** Um usuário sem `IsStaff`/`IsAdmin` que
+  autentica corretamente no `/admin/login/` recebe "sua conta não tem
+  permissão" e a sessão recém-criada é imediatamente revogada.
+- **Brute-force**: o freio embutido em `auth.Login` (10 falhas/minuto por
+  conta+IP) já protege o login do admin — nenhuma configuração adicional.
+- **CSRF** roda pelo middleware global de sempre — todo formulário do admin
+  inclui o token automaticamente.
+- **Campos `kyrux:"hash"` nunca são exibidos** — nem mascarados a partir do
+  valor real, o valor simplesmente não sai do banco para o template. Na
+  edição, o campo de senha fica em branco: preencher define uma nova senha
+  (hash automático), deixar em branco mantém a atual.
+- **Sem banco, sem admin**: se a conexão `"default"` (onde vive `auth.User`)
+  não estiver disponível, o admin recusa montar — não há como protegê-lo sem
+  autenticação, então ele simplesmente não sobe (log explica o motivo).
+- Toda entrada do usuário (busca, ordenação, paginação) é validada contra os
+  metadados reais do model antes de chegar ao SQL — `sort=coluna_falsa` é
+  silenciosamente ignorado, nunca vira uma coluna arbitrária na query.
+
+### O que o admin faz e o que não faz
+
+| Recurso | Suporte |
+|---|---|
+| CRUD completo (criar, listar, editar, excluir) | ✅ |
+| Busca textual (`LIKE`) | ✅ — opt-in via `SearchFields` |
+| Ordenação por coluna (clique no cabeçalho) | ✅ |
+| Paginação | ✅ |
+| hash/encrypt automático na escrita | ✅ — reaproveita `orm.Create`/`Query.Update` |
+| Múltiplas conexões | ✅ — `admin.Conn("nome")` |
+| Relações (FK como dropdown, inlines) | ❌ — campo FK aparece como número simples |
+| Filtros avançados / actions em lote | ❌ |
+| Histórico de alterações | ❌ |
+
+Relações e filtros avançados ficam de fora por design nesta primeira versão —
+o objetivo é um CRUD sólido e seguro sobre um model por vez, não replicar toda
+a superfície do Django admin.
+
+---
+
+## 21. Fluxo do Sistema
 
 ### Fluxo de uma requisição
 
@@ -1841,7 +1925,7 @@ Usuário A faz POST /posts/criar/
 
 ---
 
-## 21. Performance
+## 22. Performance
 
 Benchmarks medidos com `ab` (HTTP real, TCP, keep-alive) e suite `testing.B` do Go.
 Hardware: Intel Core i5-1235U · Go 1.26.2 · Linux · **SERVER_WORKERS=4** (conforme `.env`).
