@@ -13,7 +13,7 @@
   <span class="version">v{{.Version}}</span>
   {{if .User}}
   <div class="header-right">
-    <a href="/">&#8592; Voltar ao site</a>
+    <a href="/" class="btn-back">&#8592; Voltar ao site</a>
     <span>{{.User}}</span>
     <form method="POST" action="{{.BasePath}}logout/" style="display:inline">
       <input type="hidden" name="{{.CSRFField}}" value="{{.CSRFToken}}">

@@ -14,7 +14,10 @@ header{border-bottom:1px solid var(--border);padding:.9rem 2.5rem;display:flex;a
 .logo-img{height:24px;width:auto;display:block}
 header .version{font-size:.7rem;color:var(--muted);background:var(--border);padding:.2rem .55rem;border-radius:999px}
 .header-right{margin-left:auto;display:flex;align-items:center;gap:1rem;font-size:.8rem;color:var(--muted)}
-.header-right a:hover{color:var(--go-blue-light);text-decoration:underline}
+
+/* mesmo estilo do botão "← Início" do debug dashboard (core/bootstrap/debug) */
+.btn-back{display:inline-flex;align-items:center;gap:.35rem;padding:.45rem 1.1rem;border-radius:8px;font-size:.82rem;text-decoration:none;transition:border-color .2s,color .2s;background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
+.btn-back:hover{border-color:var(--go-blue);color:var(--text)}
 
 .admin-shell{flex:1;display:flex;min-height:0}
 .admin-sidebar{width:220px;flex-shrink:0;border-right:1px solid var(--border);padding:1.25rem 0;overflow-y:auto}
