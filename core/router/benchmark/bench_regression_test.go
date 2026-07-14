@@ -2,9 +2,10 @@ package benchmark_test
 
 // Linha de regressão automática — Layer 2 (framework benchmark).
 //
-// Baselines medidos em: Intel Core i3-12100F · Go 1.26.2 · Linux · GOMAXPROCS=8
+// Baselines medidos em: Intel Core i5-1235U · Go 1.26.2 · Linux · GOMAXPROCS=12
 // pacote kyrux/core/router/benchmark (external test package).
-// Atualizar as constantes após otimizações intencionais ou troca de hardware.
+// Atualizar as constantes após otimizações intencionais ou troca de hardware —
+// os valores são por máquina, não uma verdade absoluta entre CPUs diferentes.
 //
 // Uso:
 //   go test ./core/router/benchmark/ -run TestRegressionCheck -v
@@ -19,11 +20,11 @@ import (
 )
 
 const (
-	baselineRouteStatic    int64 = 1200
-	baselineRoutePathParam int64 = 1350
-	baselineRouteQuery     int64 = 1800
-	baselineMiddleware1    int64 = 1000
-	baselineMiddleware3    int64 = 1000
+	baselineRouteStatic    int64 = 1400
+	baselineRoutePathParam int64 = 1550
+	baselineRouteQuery     int64 = 2150
+	baselineMiddleware1    int64 = 1050
+	baselineMiddleware3    int64 = 1100
 
 	// Tolerância: regressão se ns/op > baseline * (1 + tolerance).
 	tolerance = 0.10
