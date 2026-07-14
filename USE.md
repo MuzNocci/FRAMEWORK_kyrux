@@ -104,7 +104,7 @@ projeto/
 APP_ENV=development
 
 # ── Servidor ──────────────────────────────────────────────────────
-SERVER_HOST=0.0.0.0
+SERVER_HOST=0.0.0.0     # bind — veja a nota abaixo antes de abrir no navegador
 SERVER_PORT=8000
 SERVER_WORKERS=4        # omitir para usar todos os CPUs disponíveis
 
@@ -147,6 +147,25 @@ FIELD_ENCRYPTION_KEY=sua-chave-de-criptografia-forte-aqui
 ```
 
 > Em produção `SECRET_KEY`, `PASSWORD_PEPPER`, `FIELD_ENCRYPTION_KEY` e `ALLOWED_HOSTS` são **obrigatórios** — o servidor recusa iniciar sem eles.
+
+### `SERVER_HOST=0.0.0.0` é o endereço de *bind*, não de acesso
+
+`0.0.0.0` diz ao servidor para escutar em **todas** as interfaces de rede da
+máquina — não é um endereço real para o qual um navegador consiga se
+conectar. Digitar `http://0.0.0.0:8000` na barra de endereços resulta em
+`ERR_CONNECTION_REFUSED` (ou comportamento inconsistente, dependendo do SO).
+
+| Endereço | O que é | Uso |
+|---|---|---|
+| `0.0.0.0` | Curinga "todas as interfaces" | Só para `SERVER_HOST` (bind) |
+| `127.0.0.1` | Loopback — esta máquina, sempre existente e roteável | Acessar localmente |
+| `localhost` | Nome que o SO resolve para `127.0.0.1` (ou `::1`) | Acessar localmente |
+
+Para acessar o servidor rodando localmente, use sempre `http://127.0.0.1:PORTA`
+ou `http://localhost:PORTA` — nunca `0.0.0.0`, mesmo com `SERVER_HOST=0.0.0.0`
+configurado (o bind continua em todas as interfaces; só o endereço de acesso
+muda). O Kyrux já traduz isso sozinho nas mensagens que imprime (console,
+welcome page, debug dashboard) — todas mostram `127.0.0.1`, nunca `0.0.0.0`.
 
 ---
 

@@ -125,7 +125,7 @@ go run main.go removemigration 0003 all    # executa down, remove do banco e do 
 APP_ENV=development          # development | production
 
 # ── Servidor ──────────────────────────────────────────────────────
-SERVER_HOST=0.0.0.0
+SERVER_HOST=0.0.0.0          # bind — veja a nota abaixo antes de abrir no navegador
 SERVER_PORT=8000
 SERVER_WORKERS=4             # omitir → runtime.NumCPU()
 
@@ -178,6 +178,22 @@ RUNTIME_GOMEMLIMIT=512MiB    # teto de memória do GC (KiB/MiB/GiB ou bytes)
 
 > Em produção: `SECRET_KEY`, `PASSWORD_PEPPER`, `FIELD_ENCRYPTION_KEY` e `ALLOWED_HOSTS` são **obrigatórios**
 > — o servidor recusa iniciar sem eles.
+
+> **`SERVER_HOST=0.0.0.0` é o endereço de *bind*, não de acesso.** Ele diz ao
+> servidor para escutar em todas as interfaces de rede da máquina — não é um
+> endereço real para o qual um navegador consiga se conectar. Para acessar
+> localmente, use sempre `http://127.0.0.1:PORTA` ou `http://localhost:PORTA`.
+> Digitar `http://0.0.0.0:PORTA` no navegador resulta em `ERR_CONNECTION_REFUSED`.
+>
+> | Endereço | O que é | Uso |
+> |---|---|---|
+> | `0.0.0.0` | Curinga "todas as interfaces" | Só para `SERVER_HOST` (bind) |
+> | `127.0.0.1` | Loopback — esta máquina, sempre existente | Acessar localmente |
+> | `localhost` | Nome que resolve para `127.0.0.1` (ou `::1`) | Acessar localmente |
+>
+> O Kyrux já traduz isso sozinho nas mensagens que imprime (console, welcome
+> page, debug dashboard) — mostram `127.0.0.1`, nunca `0.0.0.0` — mas isso não
+> muda o bind real, que continua em todas as interfaces.
 
 
 ## TAGS DOS MODELS (kyrux)
