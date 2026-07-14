@@ -43,7 +43,11 @@ func renderPage(w http.ResponseWriter, tpl *template.Template, data any) {
 	}
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
+	// no-store cobre a maioria dos navegadores; Pragma é reforço para caches
+	// mais antigos. Ainda assim o bfcache pode restaurar sem requisição nova
+	// (daí o listener de "pageshow" em admin.js, que força reload).
 	h.Set("Cache-Control", "no-store")
+	h.Set("Pragma", "no-cache")
 	h.Set("Content-Length", strconv.Itoa(buf.Len()))
 	w.Write(buf.Bytes())
 }

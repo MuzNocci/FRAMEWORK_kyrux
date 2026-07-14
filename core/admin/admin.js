@@ -7,3 +7,15 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 });
+
+// Cache-Control: no-store (já enviado pelo servidor) nem sempre impede o
+// bfcache do navegador de restaurar uma página autenticada ao clicar
+// "voltar" sem fazer uma nova requisição — nesse caso o servidor nunca tem
+// a chance de checar se a sessão ainda é válida (ex: após logout). Forçamos
+// um reload real sempre que a página volta do bfcache, o que garante uma
+// requisição nova e a checagem de sessão correta.
+window.addEventListener('pageshow', function (e) {
+  if (e.persisted) {
+    location.reload();
+  }
+});
