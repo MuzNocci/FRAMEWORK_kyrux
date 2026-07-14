@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"html/template"
-	"kyrux/core/environment"
 	"kyrux/core/router"
 	"net/http"
 	"runtime"
@@ -29,7 +28,12 @@ type pageData struct {
 
 var welcomeTpl = template.Must(template.New("welcome").Parse(welcomeHTML))
 
-func RegisterIfNeeded(r *router.Router) {
+// RegisterIfNeeded registra a página de boas-vindas em "GET /" se o dev
+// ainda não tiver definido uma rota própria para a raiz. appName, version,
+// env e addr vêm já resolvidos do bootstrap — addr em particular já é o
+// endereço EXIBÍVEL (127.0.0.1, não 0.0.0.0), evitado aqui em vez de reler
+// SERVER_HOST/SERVER_PORT direto do ambiente (duplicaria essa tradução).
+func RegisterIfNeeded(r *router.Router, appName, version, env, addr string) {
 	cssEtag := fmt.Sprintf(`"%x"`, sha256.Sum256(welcomeCSS))
 	r.Internal("GET /kyrux/statics/welcome.css", func(ctx *router.Context) {
 		if ctx.Request.Header.Get("If-None-Match") == cssEtag {
@@ -49,10 +53,10 @@ func RegisterIfNeeded(r *router.Router) {
 	}
 
 	d := pageData{
-		AppName:   environment.GetOr("APP_NAME", "kyrux"),
-		Version:   environment.GetOr("APP_VERSION", "0.1.0"),
-		Env:       environment.GetOr("APP_ENV", "production"),
-		Addr:      environment.GetOr("SERVER_HOST", "0.0.0.0") + ":" + environment.GetOr("SERVER_PORT", "8080"),
+		AppName:   appName,
+		Version:   version,
+		Env:       env,
+		Addr:      addr,
 		GoVersion: runtime.Version(),
 	}
 	var buf bytes.Buffer

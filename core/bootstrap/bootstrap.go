@@ -85,7 +85,10 @@ func Init(envPath string) (*Framework, error) {
 		}
 	}
 
-	addr := cfg.Server.Host + ":" + cfg.Server.Port
+	// addr aqui é só para EXIBIÇÃO (welcome page, debug dashboard, logs) — o
+	// bind real do servidor (Run) usa Host:Port sem tradução, para continuar
+	// escutando em todas as interfaces quando Host=0.0.0.0.
+	addr := browsableAddr(cfg.Server.Host, cfg.Server.Port)
 	render.RegisterAppFuncs(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr)
 	csrf.RegisterFuncs()
 
@@ -172,7 +175,7 @@ func Init(envPath string) (*Framework, error) {
 	}
 
 	assets.Register(r)
-	welcome.RegisterIfNeeded(r)
+	welcome.RegisterIfNeeded(r, cfg.App.Name, cfg.App.Version, cfg.App.Env, addr)
 
 	// Monta /admin/ apenas se ao menos um model foi registrado via
 	// admin.Register (feito pelos apps acima) E ADMIN_ENABLED=true —
@@ -220,6 +223,19 @@ func Init(envPath string) (*Framework, error) {
 	}
 
 	return f, nil
+}
+
+// browsableAddr traduz o endereço de bind para um endereço que o navegador
+// consiga realmente acessar. 0.0.0.0 (e variantes "escute em tudo") são
+// válidos para o servidor ESCUTAR, mas não são um destino ao qual um
+// navegador consiga se conectar — copiar essa URL do log resulta em
+// ERR_CONNECTION_REFUSED. Aqui trocamos apenas o que é EXIBIDO ao usuário;
+// o bind real do http.Server continua usando Host:Port sem alteração.
+func browsableAddr(host, port string) string {
+	if host == "0.0.0.0" || host == "" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	return host + ":" + port
 }
 
 // parseMemLimit converte "512MiB", "2GiB", "268435456" (bytes) em int64.
@@ -274,7 +290,7 @@ func (f *Framework) Run() error {
 	}
 
 	addr := f.Settings.Server.Host + ":" + f.Settings.Server.Port
-	fmt.Printf("Kyrux running on http://%s (workers: %d)\n", addr, f.Settings.Server.Workers)
+	fmt.Printf("Kyrux running on http://%s (workers: %d)\n", browsableAddr(f.Settings.Server.Host, f.Settings.Server.Port), f.Settings.Server.Workers)
 
 	writeTimeout := 10 * time.Second
 	if f.Settings.App.Debug {
