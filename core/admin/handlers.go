@@ -109,18 +109,17 @@ type site struct {
 	version  string
 }
 
-// Mount monta o site do admin em basePath (ex: "/admin/") — só se houver ao
-// menos um model registrado (Count() > 0) e um banco de dados disponível
-// para autenticar (auth.User vive na conexão "default"). Sem banco, o admin
-// não pode ser protegido — o bootstrap não monta nada (fail-closed) e
-// registra o motivo no log, em vez de expor rotas sem proteção possível.
+// Mount monta o site do admin em basePath (ex: "/admin/") sempre que houver
+// um banco de dados disponível para autenticar (auth.User vive na conexão
+// "default") — login e dashboard ficam acessíveis mesmo sem nenhum model
+// registrado ainda (o dashboard mostra um estado vazio com instruções).
+// Sem banco, o admin não pode ser protegido — o bootstrap não monta nada
+// (fail-closed) e registra o motivo no log, em vez de expor rotas sem
+// proteção possível.
 //
 // Chame após todos os apps terem registrado seus models via admin.Register,
 // e depois que orm.LoadDatabases já tiver populado dbm.
 func Mount(r *router.Router, dbm *database.Manager, store *session.Store, basePath, appName, version string) {
-	if Count() == 0 {
-		return
-	}
 	basePath = normalizeBasePath(basePath)
 
 	if dbm == nil || dbm.Use() == nil {

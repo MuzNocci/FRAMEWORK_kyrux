@@ -1,5 +1,6 @@
 {{define "content"}}
 <div class="page-head"><h1>Painel</h1></div>
+{{if .Models}}
 <div class="cards">
   {{range .Models}}
   <a href="{{$.BasePath}}{{.Slug}}/" class="model-card">
@@ -8,4 +9,12 @@
   </a>
   {{end}}
 </div>
+{{else}}
+<div class="panel">
+  <div class="empty">
+    Nenhum model registrado ainda.<br>
+    Use <code>admin.Register[SeuModel]("slug", "Rótulo")</code> no <code>Register()</code> do seu app.
+  </div>
+</div>
+{{end}}
 {{end}}
