@@ -21,13 +21,17 @@ var (
 // Só um campo pode ter "login". Não altere após o primeiro migrate — equivale a uma
 // mudança de schema que exige nova migration.
 type User struct {
-	ID        int64     `kyrux:"column:id,pk"`
-	UUID      string    `kyrux:"column:uuid,size:36"`
-	FirstName string    `kyrux:"column:first_name,size:150"`
-	LastName  string    `kyrux:"column:last_name,size:150"`
-	Username  string    `kyrux:"column:username,size:150,unique,login"`
-	Email     *string   `kyrux:"column:email,size:254,unique"`
-	Password  string    `kyrux:"column:password,size:128"`
+	ID        int64   `kyrux:"column:id,pk"`
+	UUID      string  `kyrux:"column:uuid,size:36"`
+	FirstName string  `kyrux:"column:first_name,size:150"`
+	LastName  string  `kyrux:"column:last_name,size:150"`
+	Username  string  `kyrux:"column:username,size:150,unique,login"`
+	Email     *string `kyrux:"column:email,size:254,unique"`
+	// hash: mesma proteção fail-closed de qualquer model — se o valor não
+	// tiver o prefixo $argon2id$, o ORM hasheia sozinho no Create/Update.
+	// SetPassword continua funcionando igual (já entrega o hash pronto, que
+	// o ORM reconhece pelo prefixo e não re-hasheia).
+	Password  string    `kyrux:"column:password,size:128,hash"`
 	Group     string    `kyrux:"column:user_group,size:100"`
 	IsAdmin   bool      `kyrux:"column:is_admin"`
 	IsStaff   bool      `kyrux:"column:is_staff"`
