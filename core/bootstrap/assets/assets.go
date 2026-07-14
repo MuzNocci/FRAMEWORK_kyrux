@@ -12,8 +12,12 @@ import (
 //go:embed images/logotipo/kyrux_wt.png
 var kyruxLogo []byte
 
+//go:embed images/logotipo/kyrux_icon.png
+var kyruxIcon []byte
+
 func Register(r *router.Router) {
 	serveStatic(r, "GET /kyrux/statics/kyrux_wt.png", kyruxLogo, "image/png")
+	serveStatic(r, "GET /kyrux/statics/kyrux_icon.png", kyruxIcon, "image/png")
 }
 
 func serveStatic(r *router.Router, pattern string, data []byte, contentType string) {

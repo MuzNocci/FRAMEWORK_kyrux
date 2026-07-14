@@ -373,6 +373,7 @@ var templateTpl = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{"{{"}} AppName {{"}}"}} | Página de exemplo — substitua este template para começar.</title>
+<link rel="icon" type="image/png" href="/kyrux/statics/kyrux_icon.png">
 <link rel="stylesheet" href="{{"{{"}} statics "{{.Name}}" "styles/exemplo.css" {{"}}"}}">
 </head>
 <body>
