@@ -1,7 +1,7 @@
 # KYRUX — MANUAL DE USO
 
 Framework web em Go baseado em SSR, EventBus e Realtime invisível.
-Criado por Müller Nocciolli · [www.kyrux.com.br/docs](https://www.kyrux.com.br/docs/)
+Criado por Müller Nocciolli · [framework.kyrux.com.br/docs](https://framework.kyrux.com.br/docs/)
 
 ---
 

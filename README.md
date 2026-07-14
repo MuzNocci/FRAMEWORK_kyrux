@@ -2,7 +2,7 @@
 Criado e desenvolvido por Müller Nocciolli.
 Contato: muller.nocciolli@gmail.com
 Site: www.nocciolli.com.br
-Documentação: www.kyrux.com.br/docs/
+Documentação: framework.kyrux.com.br/docs/
 
 
 ## VISÃO GERAL
