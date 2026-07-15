@@ -129,7 +129,7 @@ func Load() *Settings {
 		InstalledApps: InstalledApps,
 		App: AppSettings{
 			Name:    "kyrux",
-			Version: "0.2.0 (Alpha)",
+			Version: "0.3.0 (Beta)",
 			Env:     env,
 			Debug:   env == "development",
 		},
