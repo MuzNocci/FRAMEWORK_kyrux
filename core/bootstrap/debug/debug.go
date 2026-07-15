@@ -8,6 +8,7 @@ import (
 	"kyrux/core/cache"
 	"kyrux/core/database"
 	kyerrors "kyrux/core/errors"
+	"kyrux/core/queue"
 	"kyrux/core/router"
 	"net/http"
 	"runtime"
@@ -27,6 +28,11 @@ type cacheInfo struct {
 	Entries int
 }
 
+type queueInfo struct {
+	Enabled bool
+	Pending int
+}
+
 type dashData struct {
 	AppName    string
 	Version    string
@@ -43,10 +49,11 @@ type dashData struct {
 	NumGC      uint32
 	Databases  []database.ConnInfo
 	Cache      cacheInfo
+	Queue      queueInfo
 	Routes     []kyerrors.RouteEntry
 }
 
-func Handler(appName, version, env, addr string, workers int, routesFn func() []kyerrors.RouteEntry, dbm *database.Manager, c *cache.Cache) router.HandlerFunc {
+func Handler(appName, version, env, addr string, workers int, routesFn func() []kyerrors.RouteEntry, dbm *database.Manager, c *cache.Cache, q *queue.Queue) router.HandlerFunc {
 	return func(ctx *router.Context) {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
@@ -54,6 +61,11 @@ func Handler(appName, version, env, addr string, workers int, routesFn func() []
 		ci := cacheInfo{Enabled: c != nil}
 		if c != nil {
 			ci.Entries = c.Len()
+		}
+
+		qi := queueInfo{Enabled: q != nil}
+		if q != nil {
+			qi.Pending = q.Len()
 		}
 
 		var dbs []database.ConnInfo
@@ -77,6 +89,7 @@ func Handler(appName, version, env, addr string, workers int, routesFn func() []
 			NumGC:      ms.NumGC,
 			Databases:  dbs,
 			Cache:      ci,
+			Queue:      qi,
 			Routes:     routesFn(),
 		}
 

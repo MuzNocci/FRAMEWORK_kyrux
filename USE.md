@@ -1865,6 +1865,7 @@ Exibe:
 | Runtime          | Go version, OS/arch, goroutines, heap alocado, heap total, GC cycles        |
 | Bancos de Dados  | Cada conexão registrada: nome, driver e status ao vivo (online / offline)   |
 | Cache            | Status habilitado/desabilitado e número de entradas ativas                  |
+| Fila (Queue)     | Status habilitado/desabilitado e número de tarefas pendentes                |
 | Rotas            | Todas as rotas registradas com método e path                                |
 
 ### Navegação

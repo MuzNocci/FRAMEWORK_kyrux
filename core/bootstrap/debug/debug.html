@@ -36,6 +36,8 @@ main{flex:1;padding:1.75rem 2rem;max-width:1060px;width:100%;margin:0 auto;displ
 /* grid */
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 @media(max-width:600px){.grid{grid-template-columns:1fr}}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
+@media(max-width:800px){.grid3{grid-template-columns:1fr}}
 
 /* panel */
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:9px;overflow:hidden}
@@ -119,7 +121,7 @@ footer a:hover{text-decoration:underline}
     </div>
   </div>
 
-  <div class="grid">
+  <div class="grid3">
     <div class="panel">
       <div class="panel-head">
         <span class="label">Bancos de Dados</span>
@@ -146,6 +148,16 @@ footer a:hover{text-decoration:underline}
       <div class="info-row"><span class="info-key">Entradas ativas</span><span class="info-val">{{.Cache.Entries}}</span></div>
       {{else}}
       <div class="info-row"><span class="info-key"><span class="s-dot s-offline"></span>CACHE_ENABLED</span><span class="info-val">false</span></div>
+      {{end}}
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span class="label">Fila (Queue)</span></div>
+      {{if .Queue.Enabled}}
+      <div class="info-row"><span class="info-key">Status</span><span class="info-val tag-on">habilitado</span></div>
+      <div class="info-row"><span class="info-key">Pendentes</span><span class="info-val">{{.Queue.Pending}}</span></div>
+      {{else}}
+      <div class="info-row"><span class="info-key"><span class="s-dot s-offline"></span>QUEUE_ENABLED</span><span class="info-val">false</span></div>
       {{end}}
     </div>
   </div>

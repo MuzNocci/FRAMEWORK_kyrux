@@ -256,7 +256,7 @@ func Init(envPath string) (*Framework, error) {
 		r.HandlePrefix("GET /__kyrux_reload__", lr)
 		log.Println("bootstrap: hotreload ativo")
 
-		r.Internal("GET /kyrux/debug/", secmiddleware.LocalhostOnly(kydebug.Handler(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr, cfg.Server.Workers, r.Routes, f.DB, f.Cache)))
+		r.Internal("GET /kyrux/debug/", secmiddleware.LocalhostOnly(kydebug.Handler(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr, cfg.Server.Workers, r.Routes, f.DB, f.Cache, f.Queue)))
 		log.Printf("bootstrap: debug em http://%s/kyrux/debug/\n", addr)
 	}
 
