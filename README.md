@@ -74,7 +74,8 @@ viram `ALTER TABLE ADD COLUMN`; remoções são apenas sugeridas (comentadas).
 Rastreamento via tabela `kyrux_migrations`. `removemigration all` executa o down antes de remover o registro.
 
 ### Cache
-Cache em memória com TTL, GC automático e teto de entradas.
+Chave/valor com TTL — memória (GC automático, teto de entradas) ou Redis
+(`CACHE_DRIVER=redis`, compartilhado entre réplicas; valores serializados em JSON).
 
 ### EventBus
 Pub/sub assíncrono em goroutines separadas (fire-and-forget, com recover).
@@ -82,6 +83,8 @@ Pub/sub assíncrono em goroutines separadas (fire-and-forget, com recover).
 ### Queue
 Fila de tarefas em background: pool de workers, retry com backoff e drenagem
 no shutdown. Diferente do EventBus, cada tarefa é processada por UM worker.
+Memória (por processo) ou Redis (`QUEUE_DRIVER=redis`, lista compartilhada
+entre réplicas via LPUSH/BRPOP).
 
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
@@ -150,13 +153,15 @@ DB_DSN=postgres://user:pass@localhost:5432/db?sslmode=disable
 
 # ── Cache ─────────────────────────────────────────────────────────
 CACHE_ENABLED=false
-CACHE_DRIVER=memory          # memory | redis (roadmap)
+CACHE_DRIVER=memory          # memory | redis
 CACHE_ADDR=localhost:6379
+# CACHE_PASSWORD=            # AUTH do redis (requirepass) — só com CACHE_DRIVER=redis
 
 # ── Queue (fila de tarefas em background) ─────────────────────────
 QUEUE_ENABLED=false
-QUEUE_DRIVER=memory          # memory | redis (roadmap)
+QUEUE_DRIVER=memory          # memory | redis
 QUEUE_ADDR=localhost:6379
+# QUEUE_PASSWORD=            # AUTH do redis (requirepass) — só com QUEUE_DRIVER=redis
 QUEUE_WORKERS=4
 
 # ── Admin (painel opt-in por model — precisa de admin.Register[T] no código)

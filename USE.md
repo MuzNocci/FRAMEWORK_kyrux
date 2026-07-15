@@ -126,13 +126,15 @@ DB_DSN=postgres://user:password@localhost:5432/meudb?sslmode=disable
 
 # ── Cache ─────────────────────────────────────────────────────────
 CACHE_ENABLED=false
-CACHE_DRIVER=memory
+CACHE_DRIVER=memory     # memory | redis
 CACHE_ADDR=localhost:6379
+# CACHE_PASSWORD=       # AUTH do redis (requirepass) — só com CACHE_DRIVER=redis
 
 # ── Queue (fila de tarefas em background) ─────────────────────────
 QUEUE_ENABLED=false
-QUEUE_DRIVER=memory     # memory | redis (roadmap)
+QUEUE_DRIVER=memory     # memory | redis
 QUEUE_ADDR=localhost:6379
+# QUEUE_PASSWORD=       # AUTH do redis (requirepass) — só com QUEUE_DRIVER=redis
 QUEUE_WORKERS=4
 
 # ── Admin (painel opt-in por model — precisa de admin.Register[T] no código)
@@ -1358,7 +1360,20 @@ func ListaView(ctx *router.Context) {
 
 ## 13. Cache
 
-Cache em memória com TTL. Ativado via `CACHE_ENABLED=true`.
+Chave/valor com TTL. Ativado via `CACHE_ENABLED=true`, com dois drivers:
+
+- **`CACHE_DRIVER=memory`** (padrão) — mapa local ao processo. `Get` devolve
+  exatamente o valor Go original (mesmo ponteiro/tipo passado a `Set`).
+- **`CACHE_DRIVER=redis`** — chaves compartilhadas entre todas as réplicas via
+  `CACHE_ADDR` (+ `CACHE_PASSWORD` se o Redis tiver `requirepass`). Os valores
+  são serializados com `encoding/json`: um `Set` com um struct/slice volta do
+  `Get` como `map[string]any`/`[]any` (JSON decodificado), **não** no tipo
+  original — o exemplo abaixo (`v.([]*models.Post)`) só funciona em modo
+  memória. Prefira tipos simples nesse driver, ou decodifique você mesmo a
+  partir do valor bruto retornado.
+
+Se `CACHE_DRIVER=redis` e a conexão falhar no boot, o Kyrux cai para memória
+automaticamente e loga um aviso — nunca recusa subir por causa do cache.
 
 ```go
 // Guardar
@@ -1680,9 +1695,20 @@ processamento de mídia. Ative no `.env`:
 
 ```env
 QUEUE_ENABLED=true
-QUEUE_DRIVER=memory   # memory | redis (roadmap — a API não mudará)
+QUEUE_DRIVER=memory   # memory | redis
 QUEUE_WORKERS=4
 ```
+
+- **`QUEUE_DRIVER=memory`** (padrão) — fila local ao processo (channel Go),
+  não compartilhada entre réplicas, perdida num restart.
+- **`QUEUE_DRIVER=redis`** — lista Redis (`QUEUE_ADDR` + `QUEUE_PASSWORD` se
+  houver `requirepass`) compartilhada entre réplicas: qualquer instância pode
+  processar uma tarefa enfileirada por outra, e o que ainda não foi
+  processado sobrevive a um restart (fica na lista até alguém consumir).
+  Todas as réplicas precisam registrar os mesmos handlers via `Register`.
+  Assim como no cache Redis, o payload é serializado com JSON — um handler
+  que espera um struct recebe `map[string]any`, não o tipo original. Se a
+  conexão falhar no boot, cai para memória automaticamente com um aviso.
 
 Registre handlers no `Register` do app e enfileire nas views:
 

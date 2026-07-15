@@ -149,18 +149,45 @@ func Init(envPath string) (*Framework, error) {
 	}
 
 	if cfg.Cache.Enabled {
-		f.Cache = cache.New()
-		log.Println("bootstrap: cache enabled")
+		switch cfg.Cache.Driver {
+		case "redis":
+			rc, err := cache.NewRedis(cfg.Cache.Addr, cfg.Cache.Password)
+			if err != nil {
+				log.Printf("bootstrap: CACHE_DRIVER=redis mas falha ao conectar em %s: %v — usando cache em memória (não compartilhado entre réplicas)\n", cfg.Cache.Addr, err)
+				f.Cache = cache.New()
+			} else {
+				f.Cache = rc
+				log.Printf("bootstrap: cache enabled (redis @ %s)\n", cfg.Cache.Addr)
+			}
+		case "", "memory":
+			f.Cache = cache.New()
+			log.Println("bootstrap: cache enabled (memory)")
+		default:
+			log.Printf("bootstrap: CACHE_DRIVER=%q desconhecido — usando 'memory'\n", cfg.Cache.Driver)
+			f.Cache = cache.New()
+		}
 	} else {
 		log.Println("bootstrap: cache disabled (CACHE_ENABLED=false)")
 	}
 
 	if cfg.Queue.Enabled {
-		if cfg.Queue.Driver != "" && cfg.Queue.Driver != "memory" {
-			log.Printf("bootstrap: QUEUE_DRIVER=%q ainda não suportado — usando 'memory' (redis está no roadmap)\n", cfg.Queue.Driver)
+		switch cfg.Queue.Driver {
+		case "redis":
+			rq, err := queue.NewRedis(cfg.Queue.Addr, cfg.Queue.Password, cfg.Queue.Workers, 0)
+			if err != nil {
+				log.Printf("bootstrap: QUEUE_DRIVER=redis mas falha ao conectar em %s: %v — usando fila em memória (não compartilhada entre réplicas)\n", cfg.Queue.Addr, err)
+				f.Queue = queue.New(cfg.Queue.Workers, 0)
+			} else {
+				f.Queue = rq
+				log.Printf("bootstrap: queue enabled (redis @ %s, %d workers)\n", cfg.Queue.Addr, cfg.Queue.Workers)
+			}
+		case "", "memory":
+			f.Queue = queue.New(cfg.Queue.Workers, 0)
+			log.Printf("bootstrap: queue enabled (memory, %d workers)\n", cfg.Queue.Workers)
+		default:
+			log.Printf("bootstrap: QUEUE_DRIVER=%q desconhecido — usando 'memory'\n", cfg.Queue.Driver)
+			f.Queue = queue.New(cfg.Queue.Workers, 0)
 		}
-		f.Queue = queue.New(cfg.Queue.Workers, 0)
-		log.Printf("bootstrap: queue enabled (%d workers)\n", cfg.Queue.Workers)
 	} else {
 		log.Println("bootstrap: queue disabled (QUEUE_ENABLED=false)")
 	}

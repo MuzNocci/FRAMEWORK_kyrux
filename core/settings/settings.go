@@ -40,16 +40,18 @@ type DatabaseSettings struct {
 }
 
 type CacheSettings struct {
-	Enabled bool
-	Driver  string
-	Addr    string
+	Enabled  bool
+	Driver   string
+	Addr     string
+	Password string // usado apenas com CACHE_DRIVER=redis; vazio = sem AUTH
 }
 
 type QueueSettings struct {
-	Enabled bool
-	Driver  string // memory | redis (roadmap)
-	Addr    string // endereço do broker quando driver != memory
-	Workers int
+	Enabled  bool
+	Driver   string // memory | redis
+	Addr     string // endereço do broker quando driver != memory
+	Password string // usado apenas com QUEUE_DRIVER=redis; vazio = sem AUTH
+	Workers  int
 }
 
 type AdminSettings struct {
@@ -140,15 +142,17 @@ func Load() *Settings {
 		},
 		Databases: databases,
 		Cache: CacheSettings{
-			Enabled: environment.GetOr("CACHE_ENABLED", "false") == "true",
-			Driver:  environment.Get("CACHE_DRIVER"),
-			Addr:    environment.Get("CACHE_ADDR"),
+			Enabled:  environment.GetOr("CACHE_ENABLED", "false") == "true",
+			Driver:   environment.Get("CACHE_DRIVER"),
+			Addr:     environment.Get("CACHE_ADDR"),
+			Password: environment.Get("CACHE_PASSWORD"),
 		},
 		Queue: QueueSettings{
-			Enabled: environment.GetOr("QUEUE_ENABLED", "false") == "true",
-			Driver:  environment.GetOr("QUEUE_DRIVER", "memory"),
-			Addr:    environment.Get("QUEUE_ADDR"),
-			Workers: intOr(environment.Get("QUEUE_WORKERS"), 4),
+			Enabled:  environment.GetOr("QUEUE_ENABLED", "false") == "true",
+			Driver:   environment.GetOr("QUEUE_DRIVER", "memory"),
+			Addr:     environment.Get("QUEUE_ADDR"),
+			Password: environment.Get("QUEUE_PASSWORD"),
+			Workers:  intOr(environment.Get("QUEUE_WORKERS"), 4),
 		},
 		Admin: AdminSettings{
 			Enabled:           environment.GetOr("ADMIN_ENABLED", "false") == "true",
