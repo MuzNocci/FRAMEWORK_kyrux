@@ -2311,27 +2311,31 @@ não tem esse modelo — são documentos BSON em coleções, filtrados por
 **documentos** (`mongo.M{"idade": mongo.M{"$gt": 18}}`), sem tabelas, colunas
 ou JOIN nativo. Forçar isso dentro do `Query[T]` fingiria uma portabilidade
 que não existe. Em vez disso, `core/nosql/mongo` é um client dedicado e
-idiomático, no mesmo espírito do `fw.Cache`/`fw.Queue` (subsistemas à parte,
-não drivers do ORM).
+idiomático.
 
-### Ativar
+### Não é wireado automaticamente — e isso é proposital
 
-```env
-MONGO_ENABLED=true
-MONGO_URI=mongodb://localhost:27017
-MONGO_DATABASE=meubanco
-```
+Diferente de Cache/Queue, **não existe `fw.Mongo`, `MONGO_ENABLED` nem painel
+no debug dashboard**. `core/bootstrap` não importa `core/nosql/mongo` em
+lugar nenhum — assim como o Kyrux não importa nenhum driver relacional por
+conta própria (`import _ "github.com/lib/pq"` é responsabilidade sua), o
+client MongoDB só entra no binário se **você** importar `kyrux/core/nosql/mongo`
+em algum lugar do seu código.
 
-Diferente de Cache/Queue (que degradam para memória se o Redis configurado
-falhar), MongoDB é tratado como **datastore primário**: se `MONGO_ENABLED=true`
-e a conexão falhar no boot, o processo recusa subir (`log.Fatal`) — mesmo
-critério já usado para o banco relacional (`orm.LoadDatabases`). Não sobe
-silenciosamente sem o banco que você configurou.
+Isso importa de verdade: o driver oficial (`go.mongodb.org/mongo-driver/v2`)
+sozinho adiciona **~3,5 MB (~13%)** ao binário compilado, mesmo sem nenhuma
+conexão aberta — só pelo código de BSON, autenticação SCRAM e compressão ser
+linkado. Um projeto que nunca usa MongoDB não deve pagar esse custo. Medido
+comparando o binário com e sem o import neste framework.
 
-### Definir um documento e usar
+### Usar
 
 ```go
-import "kyrux/core/nosql/mongo"
+import (
+    "context"
+    "kyrux/core/environment"
+    "kyrux/core/nosql/mongo"
+)
 
 type Produto struct {
     Nome  string  `bson:"nome"`
@@ -2339,7 +2343,20 @@ type Produto struct {
     Ativo bool    `bson:"ativo"`
 }
 
-produtos := mongo.CollectionOf[Produto](fw.Mongo, "produtos")
+// Construa e guarde o client você mesmo — no Register() do seu app, por
+// exemplo, ou num pacote próprio de infra. environment.Get já está
+// disponível (mesmo pacote usado pelo core/settings internamente).
+var mongoClient *mongo.Client
+
+func Register(r *router.Router, fw *bootstrap.Framework) {
+    mc, err := mongo.New(environment.Get("MONGO_URI"), environment.Get("MONGO_DATABASE"))
+    if err != nil {
+        log.Fatalf("mongo: %v", err) // ou trate como preferir — a decisão é sua
+    }
+    mongoClient = mc
+}
+
+produtos := mongo.CollectionOf[Produto](mongoClient, "produtos")
 
 // Inserir
 err := produtos.InsertOne(ctx, &Produto{Nome: "Caneca", Preco: 29.9, Ativo: true})
@@ -2359,9 +2376,14 @@ n, err = produtos.DeleteMany(ctx, mongo.M{"ativo": false})
 total, err := produtos.Count(ctx, mongo.M{})
 ```
 
+`MONGO_URI`/`MONGO_DATABASE` acima são só uma sugestão de nome de variável
+(o Kyrux não lê nem valida essas chaves) — use o nome que quiser no seu
+`.env`, já que a leitura é toda sua via `environment.Get`.
+
 Todos os métodos recebem `context.Context` explícito (diferente do ORM
 relacional) — operações de rede contra o MongoDB são canceláveis/têm timeout
-por chamada.
+por chamada. Feche a conexão você mesmo no shutdown (`mongoClient.Close(ctx)`)
+— o bootstrap não sabe que ela existe, então não vai fechar por você.
 
 ### Tags `bson:"..."`
 
@@ -2372,15 +2394,9 @@ documentos).
 
 ### Escape hatch
 
-`fw.Mongo.Raw()` devolve o `*mongo.Client` nativo do driver oficial
-(`go.mongodb.org/mongo-driver/v2`), e `coll.Raw()` devolve a
-`*mongo.Collection` nativa — para agregações, transações, change streams e
-qualquer coisa que este wrapper não cobre.
-
-### Debug dashboard
-
-Com `MONGO_ENABLED=true`, o painel `/kyrux/debug/` mostra um card "MongoDB"
-com status e o nome do banco conectado, ao lado de Cache e Fila.
+`client.Raw()` devolve o `*mongo.Client` nativo do driver oficial, e
+`coll.Raw()` devolve a `*mongo.Collection` nativa — para agregações,
+transações, change streams e qualquer coisa que este wrapper não cobre.
 
 ---
 

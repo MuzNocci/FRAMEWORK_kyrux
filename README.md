@@ -88,10 +88,12 @@ Memória (por processo) ou Redis (`QUEUE_DRIVER=redis`, lista compartilhada
 entre réplicas via LPUSH/BRPOP).
 
 ### MongoDB
-Client dedicado (`core/nosql/mongo`, `fw.Mongo`) — fora do ORM relacional de
-propósito: documentos BSON não têm tabela/coluna/JOIN, então não fingimos
-portabilidade dentro do `Query[T]`. `CollectionOf[T]` dá generics + CRUD
-idiomático (Find/FindOne/UpdateOne/DeleteMany/Count) sobre o driver oficial.
+Client dedicado (`core/nosql/mongo`) — fora do ORM relacional de propósito:
+documentos BSON não têm tabela/coluna/JOIN, então não fingimos portabilidade
+dentro do `Query[T]`. `CollectionOf[T]` dá generics + CRUD idiomático
+(Find/FindOne/UpdateOne/DeleteMany/Count) sobre o driver oficial. **Não é
+importado por `core/bootstrap`** — só entra no binário (~3,5 MB) se você
+mesmo importar o pacote, mesma filosofia dos drivers relacionais.
 
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
@@ -170,11 +172,6 @@ QUEUE_DRIVER=memory          # memory | redis
 QUEUE_ADDR=localhost:6379
 # QUEUE_PASSWORD=            # AUTH do redis (requirepass) — só com QUEUE_DRIVER=redis
 QUEUE_WORKERS=4
-
-# ── MongoDB (client dedicado, fora do ORM relacional) ─────────────
-MONGO_ENABLED=false
-MONGO_URI=mongodb://localhost:27017
-MONGO_DATABASE=meubanco
 
 # ── Admin (painel opt-in por model — precisa de admin.Register[T] no código)
 ADMIN_ENABLED=false

@@ -13,7 +13,6 @@ import (
 	"kyrux/core/events"
 	"kyrux/core/orm"
 	"kyrux/core/hotreload"
-	"kyrux/core/nosql/mongo"
 	"kyrux/core/queue"
 	"kyrux/core/realtime"
 	"kyrux/core/render"
@@ -45,7 +44,6 @@ type Framework struct {
 	DB       *database.Manager
 	Cache    *cache.Cache
 	Queue    *queue.Queue
-	Mongo    *mongo.Client
 	Auth     *auth.Authenticator
 	Sessions *session.Store
 }
@@ -194,21 +192,6 @@ func Init(envPath string) (*Framework, error) {
 		log.Println("bootstrap: queue disabled (QUEUE_ENABLED=false)")
 	}
 
-	// MongoDB não é uma otimização como Cache/Queue — é um datastore
-	// primário quando habilitado, então uma conexão configurada mas
-	// inacessível no boot é fatal (mesmo critério do orm.LoadDatabases pro
-	// banco relacional), em vez de subir silenciosamente sem ele.
-	if cfg.Mongo.Enabled {
-		mc, err := mongo.New(cfg.Mongo.URI, cfg.Mongo.Database)
-		if err != nil {
-			log.Fatalf("bootstrap: MONGO_ENABLED=true mas falha ao conectar em %s: %v\n", cfg.Mongo.URI, err)
-		}
-		f.Mongo = mc
-		log.Printf("bootstrap: mongodb enabled (%s)\n", cfg.Mongo.Database)
-	} else {
-		log.Println("bootstrap: mongodb disabled (MONGO_ENABLED=false)")
-	}
-
 	for _, appName := range cfg.InstalledApps {
 		if fn, ok := registry[appName]; ok {
 			fn(r, f)
@@ -273,7 +256,7 @@ func Init(envPath string) (*Framework, error) {
 		r.HandlePrefix("GET /__kyrux_reload__", lr)
 		log.Println("bootstrap: hotreload ativo")
 
-		r.Internal("GET /kyrux/debug/", secmiddleware.LocalhostOnly(kydebug.Handler(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr, cfg.Server.Workers, r.Routes, f.DB, f.Cache, f.Queue, f.Mongo)))
+		r.Internal("GET /kyrux/debug/", secmiddleware.LocalhostOnly(kydebug.Handler(cfg.App.Name, cfg.App.Version, cfg.App.Env, addr, cfg.Server.Workers, r.Routes, f.DB, f.Cache, f.Queue)))
 		log.Printf("bootstrap: debug em http://%s/kyrux/debug/\n", addr)
 	}
 
@@ -384,11 +367,6 @@ func (f *Framework) Run() error {
 		}
 		if f.Cache != nil {
 			f.Cache.Close()
-		}
-		if f.Mongo != nil {
-			if err := f.Mongo.Close(ctx); err != nil {
-				log.Printf("bootstrap: mongo: erro ao encerrar conexão: %v\n", err)
-			}
 		}
 		fmt.Printf("[%s] see you again.\n", time.Now().Format("15:04:05"))
 		close(done)
