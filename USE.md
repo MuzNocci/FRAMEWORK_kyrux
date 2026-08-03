@@ -30,6 +30,7 @@ Criado por Müller Nocciolli · [framework.kyrux.com.br/docs](https://framework.
 21. [Fluxo do Sistema](#21-fluxo-do-sistema)
 22. [Performance](#22-performance)
 23. [MongoDB (NoSQL)](#23-mongodb-nosql)
+24. [Redis como banco (NoSQL)](#24-redis-como-banco-nosql)
 
 ---
 
@@ -2397,6 +2398,78 @@ documentos).
 `client.Raw()` devolve o `*mongo.Client` nativo do driver oficial, e
 `coll.Raw()` devolve a `*mongo.Collection` nativa — para agregações,
 transações, change streams e qualquer coisa que este wrapper não cobre.
+
+---
+
+## 24. Redis como banco (NoSQL)
+
+**Não confunda com `fw.Cache`/`fw.Queue`** — aqueles já usam Redis
+internamente, mas só como chave/valor com TTL e fila, respectivamente
+(`CACHE_DRIVER=redis`/`QUEUE_DRIVER=redis`). `core/nosql/redis` expõe as
+**estruturas de dados reais do Redis** — hash, lista, conjunto, conjunto
+ordenado, pub/sub — para usar Redis como banco de propósito geral, não só
+como cache.
+
+Mesmo padrão do MongoDB: **não é importado por `core/bootstrap`**, não tem
+`fw.Redis` nem variável de ambiente lida automaticamente. Você importa
+`kyrux/core/nosql/redis` no seu próprio código, só se for usar. Diferença
+prática: se seu projeto já usa `CACHE_DRIVER=redis` ou `QUEUE_DRIVER=redis`,
+o `go-redis` já está no binário por causa deles — usar este pacote também
+não adiciona peso extra, é a mesma dependência reaproveitada.
+
+### Usar
+
+```go
+import "kyrux/core/nosql/redis"
+
+rc, err := redis.New("localhost:6379", "", 0) // addr, password, db lógico (0-15)
+defer rc.Close()
+
+ctx := context.Background()
+
+// String simples (sem TTL obrigatório, diferente do fw.Cache)
+rc.Set(ctx, "sessao:abc", "user_id=42", time.Hour)
+v, err := rc.Get(ctx, "sessao:abc") // redis.ErrNil se não existir
+
+// Valores estruturados via JSON
+rc.SetJSON(ctx, "produto:1", Produto{Nome: "Caneca", Preco: 29.9}, 0)
+var p Produto
+rc.GetJSON(ctx, "produto:1", &p)
+
+// Hash — campos de um "objeto"
+rc.HSet(ctx, "user:1", map[string]any{"nome": "Ana", "idade": 30})
+nome, _ := rc.HGet(ctx, "user:1", "nome")
+todos, _ := rc.HGetAll(ctx, "user:1")
+
+// Lista
+rc.RPush(ctx, "fila:emails", "a@x.com", "b@x.com")
+itens, _ := rc.LRange(ctx, "fila:emails", 0, -1)
+
+// Conjunto
+rc.SAdd(ctx, "tags:post:1", "go", "web")
+membros, _ := rc.SMembers(ctx, "tags:post:1")
+
+// Conjunto ordenado — ranking/leaderboard
+rc.ZAdd(ctx, "ranking", redis.ZMember{Score: 100, Member: "jogador1"})
+top10, _ := rc.ZRange(ctx, "ranking", 0, 9)
+
+// Pub/Sub
+sub := rc.Subscribe(ctx, "notificacoes")
+defer sub.Close()
+for msg := range sub.Channel() {
+    fmt.Println(msg.Payload)
+}
+```
+
+Todos os métodos recebem `context.Context` explícito. `redis.ErrNil` é
+devolvido quando uma chave/campo não existe (equivalente ao `sql.ErrNoRows`
+do ORM e ao `mongo.ErrNoDocuments` do client Mongo).
+
+### Escape hatch
+
+`client.Raw()` devolve o `*redis.Client` nativo do driver oficial
+(`github.com/redis/go-redis/v9`) — para scripts Lua, pipelines e
+transações (`MULTI`/`EXEC`) que este wrapper não cobre.
 
 ---
 

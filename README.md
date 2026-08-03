@@ -95,6 +95,13 @@ dentro do `Query[T]`. `CollectionOf[T]` dá generics + CRUD idiomático
 importado por `core/bootstrap`** — só entra no binário (~3,5 MB) se você
 mesmo importar o pacote, mesma filosofia dos drivers relacionais.
 
+### Redis (NoSQL de propósito geral)
+Client dedicado (`core/nosql/redis`) — diferente de `fw.Cache`/`fw.Queue`
+(que já usam Redis, mas só como KV+TTL e fila): expõe hash, lista, conjunto,
+conjunto ordenado e pub/sub de verdade. Também não é importado por
+`core/bootstrap` — mas se seu projeto já usa Cache/Queue com driver redis, o
+`go-redis` já está no binário, então usar este pacote não pesa a mais.
+
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
 (broadcast global) e variantes `*For` com escopo de sessão para conteúdo por usuário.
