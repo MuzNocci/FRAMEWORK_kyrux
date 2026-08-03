@@ -29,6 +29,7 @@ Criado por Müller Nocciolli · [framework.kyrux.com.br/docs](https://framework.
 20. [Admin (Painel de Administração)](#20-admin-painel-de-administração)
 21. [Fluxo do Sistema](#21-fluxo-do-sistema)
 22. [Performance](#22-performance)
+23. [MongoDB (NoSQL)](#23-mongodb-nosql)
 
 ---
 
@@ -2298,6 +2299,88 @@ O servidor de benchmark (`/tmp/kyrux_bench_server.go`) usa `runtime.GOMAXPROCS(4
 | Layer 3 — `ab` | ~120k–220k | Capacidade máxima com cliente C otimizado |
 
 Não comparar números entre camadas — cada uma mede uma coisa diferente.
+
+---
+
+## 23. MongoDB (NoSQL)
+
+MongoDB **não passa pelo ORM relacional** (`core/orm`, `Query[T]`) — e não vai
+passar, de propósito. O ORM é um construtor de SQL: `Where` gera uma cláusula
+SQL crua, `Join` gera `INNER JOIN`, migrations geram `CREATE TABLE`. MongoDB
+não tem esse modelo — são documentos BSON em coleções, filtrados por
+**documentos** (`mongo.M{"idade": mongo.M{"$gt": 18}}`), sem tabelas, colunas
+ou JOIN nativo. Forçar isso dentro do `Query[T]` fingiria uma portabilidade
+que não existe. Em vez disso, `core/nosql/mongo` é um client dedicado e
+idiomático, no mesmo espírito do `fw.Cache`/`fw.Queue` (subsistemas à parte,
+não drivers do ORM).
+
+### Ativar
+
+```env
+MONGO_ENABLED=true
+MONGO_URI=mongodb://localhost:27017
+MONGO_DATABASE=meubanco
+```
+
+Diferente de Cache/Queue (que degradam para memória se o Redis configurado
+falhar), MongoDB é tratado como **datastore primário**: se `MONGO_ENABLED=true`
+e a conexão falhar no boot, o processo recusa subir (`log.Fatal`) — mesmo
+critério já usado para o banco relacional (`orm.LoadDatabases`). Não sobe
+silenciosamente sem o banco que você configurou.
+
+### Definir um documento e usar
+
+```go
+import "kyrux/core/nosql/mongo"
+
+type Produto struct {
+    Nome  string  `bson:"nome"`
+    Preco float64 `bson:"preco"`
+    Ativo bool    `bson:"ativo"`
+}
+
+produtos := mongo.CollectionOf[Produto](fw.Mongo, "produtos")
+
+// Inserir
+err := produtos.InsertOne(ctx, &Produto{Nome: "Caneca", Preco: 29.9, Ativo: true})
+
+// Buscar (mongo.M é só um map[string]any — não precisa de um segundo import)
+lista, err := produtos.Find(ctx, mongo.M{"ativo": true})
+um, err := produtos.FindOne(ctx, mongo.M{"nome": "Caneca"}) // mongo.ErrNoDocuments se não achar
+
+// Atualizar — MongoDB exige operador ($set), diferente do UPDATE SQL:
+// um update sem operador FALHA, não substitui o documento inteiro.
+n, err := produtos.UpdateOne(ctx, mongo.M{"nome": "Caneca"}, mongo.M{"$set": mongo.M{"preco": 39.9}})
+
+// Remover
+n, err = produtos.DeleteMany(ctx, mongo.M{"ativo": false})
+
+// Contar
+total, err := produtos.Count(ctx, mongo.M{})
+```
+
+Todos os métodos recebem `context.Context` explícito (diferente do ORM
+relacional) — operações de rede contra o MongoDB são canceláveis/têm timeout
+por chamada.
+
+### Tags `bson:"..."`
+
+O nome do campo no documento é controlado por tags `bson`, exatamente como
+`encoding/json` — sem relação com as tags `kyrux:"..."` do ORM relacional
+(que não se aplicam aqui: não existe `kyrux:"pk"`, `kyrux:"unique"` etc. para
+documentos).
+
+### Escape hatch
+
+`fw.Mongo.Raw()` devolve o `*mongo.Client` nativo do driver oficial
+(`go.mongodb.org/mongo-driver/v2`), e `coll.Raw()` devolve a
+`*mongo.Collection` nativa — para agregações, transações, change streams e
+qualquer coisa que este wrapper não cobre.
+
+### Debug dashboard
+
+Com `MONGO_ENABLED=true`, o painel `/kyrux/debug/` mostra um card "MongoDB"
+com status e o nome do banco conectado, ao lado de Cache e Fila.
 
 ---
 

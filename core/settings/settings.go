@@ -15,6 +15,7 @@ type Settings struct {
 	Databases     []DatabaseSettings // todos os bancos configurados
 	Cache         CacheSettings
 	Queue         QueueSettings
+	Mongo         MongoSettings
 	Admin         AdminSettings
 	Security      SecuritySettings
 }
@@ -52,6 +53,14 @@ type QueueSettings struct {
 	Addr     string // endereço do broker quando driver != memory
 	Password string // usado apenas com QUEUE_DRIVER=redis; vazio = sem AUTH
 	Workers  int
+}
+
+// MongoSettings configura o client MongoDB (core/nosql/mongo) — não é um
+// driver do ORM relacional, é um subsistema à parte (ver USE.md).
+type MongoSettings struct {
+	Enabled  bool
+	URI      string
+	Database string
 }
 
 type AdminSettings struct {
@@ -153,6 +162,11 @@ func Load() *Settings {
 			Addr:     environment.Get("QUEUE_ADDR"),
 			Password: environment.Get("QUEUE_PASSWORD"),
 			Workers:  intOr(environment.Get("QUEUE_WORKERS"), 4),
+		},
+		Mongo: MongoSettings{
+			Enabled:  environment.GetOr("MONGO_ENABLED", "false") == "true",
+			URI:      environment.Get("MONGO_URI"),
+			Database: environment.Get("MONGO_DATABASE"),
 		},
 		Admin: AdminSettings{
 			Enabled:           environment.GetOr("ADMIN_ENABLED", "false") == "true",

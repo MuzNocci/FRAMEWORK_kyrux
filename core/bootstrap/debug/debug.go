@@ -8,6 +8,7 @@ import (
 	"kyrux/core/cache"
 	"kyrux/core/database"
 	kyerrors "kyrux/core/errors"
+	"kyrux/core/nosql/mongo"
 	"kyrux/core/queue"
 	"kyrux/core/router"
 	"net/http"
@@ -33,6 +34,11 @@ type queueInfo struct {
 	Pending int
 }
 
+type mongoInfo struct {
+	Enabled  bool
+	Database string
+}
+
 type dashData struct {
 	AppName    string
 	Version    string
@@ -50,10 +56,11 @@ type dashData struct {
 	Databases  []database.ConnInfo
 	Cache      cacheInfo
 	Queue      queueInfo
+	Mongo      mongoInfo
 	Routes     []kyerrors.RouteEntry
 }
 
-func Handler(appName, version, env, addr string, workers int, routesFn func() []kyerrors.RouteEntry, dbm *database.Manager, c *cache.Cache, q *queue.Queue) router.HandlerFunc {
+func Handler(appName, version, env, addr string, workers int, routesFn func() []kyerrors.RouteEntry, dbm *database.Manager, c *cache.Cache, q *queue.Queue, mc *mongo.Client) router.HandlerFunc {
 	return func(ctx *router.Context) {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
@@ -66,6 +73,11 @@ func Handler(appName, version, env, addr string, workers int, routesFn func() []
 		qi := queueInfo{Enabled: q != nil}
 		if q != nil {
 			qi.Pending = q.Len()
+		}
+
+		mi := mongoInfo{Enabled: mc != nil}
+		if mc != nil {
+			mi.Database = mc.Database().Name()
 		}
 
 		var dbs []database.ConnInfo
@@ -90,6 +102,7 @@ func Handler(appName, version, env, addr string, workers int, routesFn func() []
 			Databases:  dbs,
 			Cache:      ci,
 			Queue:      qi,
+			Mongo:      mi,
 			Routes:     routesFn(),
 		}
 
