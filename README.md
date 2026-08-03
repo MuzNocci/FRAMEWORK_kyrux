@@ -62,7 +62,8 @@ Query builder fluente com generics: Where/OrWhere/WhereIn, Join/LeftJoin (filtro
 relação), Prefetch (carregamento relacionado sem N+1), OrderBy múltiplo, Distinct,
 Exists/Count/Sum/Avg/Min/Max, First/Last, GetOrCreate/UpdateOrCreate, CreateAll (bulk),
 Each (streaming), hash/encrypt automático, autonow, paginação (com e sem COUNT),
-transações (`FromTx`/`CreateTx`), multi-tenant por schema.
+transações (`FromTx`/`CreateTx`), multi-tenant por schema. Busca full-text nativa
+(`Search`, campo `kyrux:"fts"`) em Postgres/MySQL/SQLite — sem fallback fake em LIKE.
 
 ### Database
 Wrapper de `database/sql` com pool configurado, multi-conexão nomeada, transações e schema por conexão.
@@ -241,6 +242,7 @@ type Cliente struct {
 | `login` | Marca o campo de login do `auth.User`. Apenas um campo. Imutável após o primeiro migrate. |
 | `autonow` | `CURRENT_TIMESTAMP` automático em todo Update (ex: `updated_at`). Também preenche no INSERT se zerado. |
 | `fk:tabela` | `REFERENCES tabela(id)` + índice na migration. A tabela referenciada deve existir antes. |
+| `fts` | Busca full-text nativa via `Query.Search()`. Migration gera índice GIN (Postgres), `FULLTEXT` (MySQL) ou tabela virtual FTS5 + triggers (SQLite). Outros drivers: erro, sem fallback em LIKE. |
 
 
 ## DRIVERS DE BANCO SUPORTADOS

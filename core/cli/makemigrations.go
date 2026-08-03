@@ -98,15 +98,16 @@ func runMakeMigrations() error {
 
 // migAlter descreve as diferenças entre um model e o schema das migrations.
 type migAlter struct {
-	Table   string
-	Add     []migField // colunas novas no model → ALTER TABLE ADD COLUMN
-	Removed []string   // colunas nas migrations que sumiram do model → só aviso
+	Table    string
+	PKColumn string     // coluna da PK da tabela — necessária pro DDL de FTS no SQLite
+	Add      []migField // colunas novas no model → ALTER TABLE ADD COLUMN
+	Removed  []string   // colunas nas migrations que sumiram do model → só aviso
 }
 
 // migDiffModel compara os campos do model com as colunas conhecidas da tabela.
 // Retorna nil quando não há diferença.
 func migDiffModel(m migModel, cols map[string]bool) *migAlter {
-	a := migAlter{Table: m.Table}
+	a := migAlter{Table: m.Table, PKColumn: migPKColumn(m)}
 	modelCols := make(map[string]bool, len(m.Fields))
 	for _, f := range m.Fields {
 		modelCols[f.Column] = true
@@ -140,6 +141,7 @@ type migField struct {
 	NotNull bool
 	Unique  bool
 	FK      string // kyrux:"fk:tabela" → REFERENCES tabela(id) + índice
+	FTS     bool   // kyrux:"fts" → índice/tabela de busca full-text
 }
 
 type migModel struct {
@@ -220,6 +222,8 @@ func migBuildField(name, goType, kyruxTag string, notNull bool) migField {
 			fd.IsPK = true
 		case part == "unique" || part == "unique:true":
 			fd.Unique = true
+		case part == "fts":
+			fd.FTS = true
 		case strings.HasPrefix(part, "column:"):
 			fd.Column = strings.TrimPrefix(part, "column:")
 		case strings.HasPrefix(part, "size:"):
@@ -267,6 +271,9 @@ func migGenerateSQL(models []migModel, alters []migAlter, driver string) string 
 				fmt.Fprintf(&sb, "\nCREATE INDEX IF NOT EXISTS %s_%s_idx ON %s (%s);\n",
 					m.Table, f.Column, m.Table, f.Column)
 			}
+			if f.FTS {
+				sb.WriteString(migFTSUpSQL(m.Table, migPKColumn(m), f, driver))
+			}
 		}
 	}
 
@@ -283,6 +290,9 @@ func migGenerateSQL(models []migModel, alters []migAlter, driver string) string 
 				} else if f.FK != "" {
 					fmt.Fprintf(&sb, "CREATE INDEX IF NOT EXISTS %s_%s_idx ON %s (%s);\n",
 						a.Table, f.Column, a.Table, f.Column)
+				}
+				if f.FTS {
+					sb.WriteString(migFTSUpSQL(a.Table, a.PKColumn, f, driver))
 				}
 			}
 		}
@@ -301,6 +311,9 @@ func migGenerateSQL(models []migModel, alters []migAlter, driver string) string 
 		a := alters[i]
 		for j := len(a.Add) - 1; j >= 0; j-- {
 			f := a.Add[j]
+			if f.FTS {
+				sb.WriteString(migFTSDownSQL(a.Table, f, driver))
+			}
 			if f.Unique || f.FK != "" {
 				fmt.Fprintf(&sb, "DROP INDEX IF EXISTS %s_%s_idx;\n", a.Table, f.Column)
 			}
@@ -310,6 +323,9 @@ func migGenerateSQL(models []migModel, alters []migAlter, driver string) string 
 	for i := len(models) - 1; i >= 0; i-- {
 		m := models[i]
 		for _, f := range m.Fields {
+			if f.FTS {
+				sb.WriteString(migFTSDownSQL(m.Table, f, driver))
+			}
 			if (f.Unique || f.FK != "") && !f.IsPK {
 				fmt.Fprintf(&sb, "DROP INDEX IF EXISTS %s_%s_idx;\n", m.Table, f.Column)
 			}
@@ -317,6 +333,70 @@ func migGenerateSQL(models []migModel, alters []migAlter, driver string) string 
 		fmt.Fprintf(&sb, "DROP TABLE IF EXISTS %s;\n", m.Table)
 	}
 
+	return sb.String()
+}
+
+// migPKColumn retorna a coluna da chave primária do model — "id" como
+// fallback (não deveria acontecer: migParseFile só inclui models com PK).
+func migPKColumn(m migModel) string {
+	for _, f := range m.Fields {
+		if f.IsPK {
+			return f.Column
+		}
+	}
+	return "id"
+}
+
+// migFTSShadowTable é o nome da tabela virtual FTS5 (SQLite) para table.coluna.
+func migFTSShadowTable(table, col string) string {
+	return table + "_" + col + "_fts"
+}
+
+// migFTSUpSQL gera o DDL que habilita busca full-text na coluna, de acordo
+// com o driver — cada um com seu próprio mecanismo nativo (ver Query.Search
+// em core/orm/query.go). Em driver não suportado, gera só um aviso
+// comentado: não existe fallback silencioso para LIKE.
+func migFTSUpSQL(table, pkCol string, f migField, driver string) string {
+	var sb strings.Builder
+	switch driver {
+	case "postgres", "pgx":
+		fmt.Fprintf(&sb, "\nCREATE INDEX IF NOT EXISTS %s_%s_fts_idx ON %s USING GIN (to_tsvector('portuguese', %s));\n",
+			table, f.Column, table, f.Column)
+	case "mysql":
+		fmt.Fprintf(&sb, "\nCREATE FULLTEXT INDEX %s_%s_fts_idx ON %s (%s);\n",
+			table, f.Column, table, f.Column)
+	case "sqlite", "sqlite3":
+		shadow := migFTSShadowTable(table, f.Column)
+		fmt.Fprintf(&sb, "\nCREATE VIRTUAL TABLE IF NOT EXISTS %s USING fts5(%s, content='%s', content_rowid='%s');\n",
+			shadow, f.Column, table, pkCol)
+		fmt.Fprintf(&sb, "CREATE TRIGGER IF NOT EXISTS %s_ai AFTER INSERT ON %s BEGIN\n  INSERT INTO %s(rowid, %s) VALUES (new.%s, new.%s);\nEND;\n",
+			shadow, table, shadow, f.Column, pkCol, f.Column)
+		fmt.Fprintf(&sb, "CREATE TRIGGER IF NOT EXISTS %s_ad AFTER DELETE ON %s BEGIN\n  INSERT INTO %s(%s, rowid, %s) VALUES('delete', old.%s, old.%s);\nEND;\n",
+			shadow, table, shadow, shadow, f.Column, pkCol, f.Column)
+		fmt.Fprintf(&sb, "CREATE TRIGGER IF NOT EXISTS %s_au AFTER UPDATE ON %s BEGIN\n  INSERT INTO %s(%s, rowid, %s) VALUES('delete', old.%s, old.%s);\n  INSERT INTO %s(rowid, %s) VALUES (new.%s, new.%s);\nEND;\n",
+			shadow, table, shadow, shadow, f.Column, pkCol, f.Column, shadow, f.Column, pkCol, f.Column)
+	default:
+		fmt.Fprintf(&sb, "\n-- AVISO: kyrux:\"fts\" em %s.%s ignorado — full-text search não suportado no driver %q (suportado: postgres, mysql, sqlite)\n",
+			table, f.Column, driver)
+	}
+	return sb.String()
+}
+
+// migFTSDownSQL desfaz o DDL gerado por migFTSUpSQL.
+func migFTSDownSQL(table string, f migField, driver string) string {
+	var sb strings.Builder
+	switch driver {
+	case "postgres", "pgx":
+		fmt.Fprintf(&sb, "DROP INDEX IF EXISTS %s_%s_fts_idx;\n", table, f.Column)
+	case "mysql":
+		fmt.Fprintf(&sb, "DROP INDEX %s_%s_fts_idx ON %s;\n", table, f.Column, table)
+	case "sqlite", "sqlite3":
+		shadow := migFTSShadowTable(table, f.Column)
+		fmt.Fprintf(&sb, "DROP TRIGGER IF EXISTS %s_ai;\n", shadow)
+		fmt.Fprintf(&sb, "DROP TRIGGER IF EXISTS %s_ad;\n", shadow)
+		fmt.Fprintf(&sb, "DROP TRIGGER IF EXISTS %s_au;\n", shadow)
+		fmt.Fprintf(&sb, "DROP TABLE IF EXISTS %s;\n", shadow)
+	}
 	return sb.String()
 }
 

@@ -55,6 +55,7 @@ type Query[T any] struct {
 	where    []whereClause
 	args     []any
 	orderBy  []string
+	rankArgs []any // argumentos extras da expressão de ranking no ORDER BY — ver Search
 	distinct bool
 	limit    int
 	offset   int
@@ -169,6 +170,67 @@ func (q *Query[T]) WhereIn(col string, vals ...any) *Query[T] {
 	sb.WriteByte(')')
 	q.where = append(q.where, whereClause{cond: sb.String()})
 	q.args = append(q.args, vals...)
+	return q
+}
+
+// Search filtra por uma condição de busca full-text (linguagem natural)
+// sobre uma coluna marcada com kyrux:"fts" no model, e por padrão ordena o
+// resultado por relevância (mais relevante primeiro). Para desempatar por
+// outro critério, encadeie OrderBy depois — ele só ACRESCENTA colunas ao
+// final, a relevância continua sendo o critério primário:
+//
+//	orm.FromDB[Post](db).Search("conteudo", "kyrux orm").All()               // só por relevância
+//	orm.FromDB[Post](db).Search("conteudo", "kyrux orm").OrderBy("id").All() // relevância, depois id
+//
+// Suportado nativamente em três drivers, cada um com seu próprio mecanismo
+// (o índice é criado pelo makemigrations quando o campo tem kyrux:"fts"):
+//   - postgres/pgx: to_tsvector/to_tsquery + índice GIN, ts_rank para ordenar.
+//   - mysql: índice FULLTEXT + MATCH...AGAINST (linguagem natural).
+//   - sqlite: FTS5 — tabela virtual "<tabela>_<coluna>_fts" (JOIN automático
+//     pelo rowid), ordenada pela coluna oculta "rank" do FTS5.
+//
+// Em qualquer outro driver (sqlserver, oracle) retorna erro — não existe
+// fallback silencioso para LIKE, que não é busca full-text de verdade.
+func (q *Query[T]) Search(col, term string) *Query[T] {
+	if !validIdent(col) {
+		q.err = fmt.Errorf("orm: search: identificador inválido: %q", col)
+		return q
+	}
+	f, ok := q.meta.ColToField[col]
+	if !ok || !f.FTS {
+		q.err = fmt.Errorf("orm: search: coluna %q não está marcada com kyrux:\"fts\" no model %s", col, q.meta.Table)
+		return q
+	}
+
+	switch q.driver {
+	case "postgres", "pgx":
+		vec := fmt.Sprintf("to_tsvector('portuguese', %s)", col)
+		q.where = append(q.where, whereClause{cond: vec + " @@ plainto_tsquery('portuguese', ?)"})
+		q.args = append(q.args, term)
+		q.orderBy = []string{fmt.Sprintf("ts_rank(%s, plainto_tsquery('portuguese', ?)) DESC", vec)}
+		q.rankArgs = []any{term}
+	case "mysql":
+		match := fmt.Sprintf("MATCH(%s) AGAINST(? IN NATURAL LANGUAGE MODE)", col)
+		q.where = append(q.where, whereClause{cond: match})
+		q.args = append(q.args, term)
+		q.orderBy = []string{match + " DESC"}
+		q.rankArgs = []any{term}
+	case "sqlite", "sqlite3":
+		pkCol := "id"
+		if q.meta.PKField != nil {
+			pkCol = q.meta.PKField.Column
+		}
+		shadow := q.meta.Table + "_" + col + "_fts"
+		q.addJoin("INNER", shadow, shadow+".rowid = "+q.meta.Table+"."+pkCol)
+		if q.err != nil {
+			return q
+		}
+		q.where = append(q.where, whereClause{cond: shadow + " MATCH ?"})
+		q.args = append(q.args, term)
+		q.orderBy = []string{shadow + ".rank"}
+	default:
+		q.err = fmt.Errorf("orm: search: full-text search não é suportado no driver %q (suportado: postgres, pgx, mysql, sqlite)", q.driver)
+	}
 	return q
 }
 
@@ -684,8 +746,9 @@ func (q *Query[T]) buildSelect(forceLimit int) (string, []any) {
 		lim = forceLimit
 	}
 	args := q.args
-	if lim > 0 || q.offset > 0 {
-		args = append(make([]any, 0, len(q.args)+2), q.args...)
+	if len(q.rankArgs) > 0 || lim > 0 || q.offset > 0 {
+		args = append(make([]any, 0, len(q.args)+len(q.rankArgs)+2), q.args...)
+		args = append(args, q.rankArgs...)
 	}
 	if lim > 0 {
 		sb.WriteString(" LIMIT ?")
@@ -705,7 +768,8 @@ func (q *Query[T]) buildSelectPage(pageSize, offset int) (string, []any) {
 	q.writeWhere(&sb)
 	q.writeOrderBy(&sb)
 	sb.WriteString(" LIMIT ? OFFSET ?")
-	args := append(make([]any, 0, len(q.args)+2), q.args...)
+	args := append(make([]any, 0, len(q.args)+len(q.rankArgs)+2), q.args...)
+	args = append(args, q.rankArgs...)
 	args = append(args, pageSize, offset)
 	return rewritePlaceholders(q.driver, sb.String()), args
 }

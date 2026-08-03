@@ -156,3 +156,101 @@ func TestAutonowMeta(t *testing.T) {
 		t.Errorf("autonow deveria implicar default CURRENT_TIMESTAMP, recebeu %q", f.Default)
 	}
 }
+
+// ── Search (full-text) ──────────────────────────────────────────────────────
+
+type artigoTeste struct {
+	ID        int64  `kyrux:"pk"`
+	Conteudo  string `kyrux:"fts"`
+	SemIndice string
+}
+
+func newSearchTestQuery(driver string) *Query[artigoTeste] {
+	return &Query[artigoTeste]{
+		driver: driver,
+		meta:   metaOf[artigoTeste](),
+	}
+}
+
+func TestSearchColunaSemTagFTS(t *testing.T) {
+	q := newSearchTestQuery("postgres").Search("sem_indice", "termo")
+	if q.err == nil {
+		t.Fatal("esperava erro ao buscar em coluna sem kyrux:\"fts\"")
+	}
+}
+
+func TestSearchIdentificadorInvalido(t *testing.T) {
+	q := newSearchTestQuery("postgres").Search("conteudo; DROP TABLE x", "termo")
+	if q.err == nil {
+		t.Fatal("esperava erro para identificador inválido")
+	}
+}
+
+func TestSearchDriverNaoSuportado(t *testing.T) {
+	q := newSearchTestQuery("sqlserver").Search("conteudo", "termo")
+	if q.err == nil {
+		t.Fatal("esperava erro em driver sem suporte a Search")
+	}
+}
+
+func TestSearchPostgresSQL(t *testing.T) {
+	q := newSearchTestQuery("postgres").Search("conteudo", "golang orm")
+	sqlStr, args := q.buildSelect(0)
+
+	wantWhere := "to_tsvector('portuguese', conteudo) @@ plainto_tsquery('portuguese', $1)"
+	if !strings.Contains(sqlStr, wantWhere) {
+		t.Errorf("WHERE esperado ausente:\n%s\nsql: %s", wantWhere, sqlStr)
+	}
+	wantOrder := "ORDER BY ts_rank(to_tsvector('portuguese', conteudo), plainto_tsquery('portuguese', $2)) DESC"
+	if !strings.Contains(sqlStr, wantOrder) {
+		t.Errorf("ORDER BY esperado ausente:\n%s\nsql: %s", wantOrder, sqlStr)
+	}
+	if len(args) != 2 || args[0] != "golang orm" || args[1] != "golang orm" {
+		t.Errorf("args: esperava [golang orm, golang orm], recebeu %v", args)
+	}
+}
+
+func TestSearchMySQLSQL(t *testing.T) {
+	q := newSearchTestQuery("mysql").Search("conteudo", "golang")
+	sqlStr, args := q.buildSelect(0)
+
+	wantWhere := "MATCH(conteudo) AGAINST(? IN NATURAL LANGUAGE MODE)"
+	if !strings.Contains(sqlStr, "WHERE ("+wantWhere+")") {
+		t.Errorf("WHERE esperado ausente:\nsql: %s", sqlStr)
+	}
+	if !strings.Contains(sqlStr, "ORDER BY "+wantWhere+" DESC") {
+		t.Errorf("ORDER BY esperado ausente:\nsql: %s", sqlStr)
+	}
+	if len(args) != 2 || args[0] != "golang" || args[1] != "golang" {
+		t.Errorf("args: esperava [golang, golang], recebeu %v", args)
+	}
+}
+
+func TestSearchSQLiteSQL(t *testing.T) {
+	q := newSearchTestQuery("sqlite").Search("conteudo", "golang")
+	sqlStr, args := q.buildSelect(0)
+
+	for _, want := range []string{
+		"INNER JOIN artigo_testes_conteudo_fts ON artigo_testes_conteudo_fts.rowid = artigo_testes.id",
+		"WHERE (artigo_testes_conteudo_fts MATCH ?)",
+		"ORDER BY artigo_testes_conteudo_fts.rank",
+	} {
+		if !strings.Contains(sqlStr, want) {
+			t.Errorf("esperava %q no sql:\n%s", want, sqlStr)
+		}
+	}
+	if len(args) != 1 || args[0] != "golang" {
+		t.Errorf("args: esperava [golang] (sem rankArgs no sqlite), recebeu %v", args)
+	}
+}
+
+// TestSearchComOrderByAcrescenta garante que um OrderBy chamado depois de
+// Search vira critério de desempate, sem substituir a ordenação por
+// relevância (que continua sendo o primeiro critério).
+func TestSearchComOrderByAcrescenta(t *testing.T) {
+	q := newSearchTestQuery("postgres").Search("conteudo", "x").OrderBy("id DESC")
+	sqlStr, _ := q.buildSelect(0)
+	if !strings.Contains(sqlStr, "ORDER BY ts_rank(to_tsvector('portuguese', conteudo), plainto_tsquery('portuguese', $2)) DESC, id DESC") {
+		t.Errorf("esperava rank como critério primário e id DESC como desempate:\n%s", sqlStr)
+	}
+}

@@ -966,6 +966,7 @@ O `removemigration all` executa as seguintes etapas em ordem:
 | campo `kyrux:"pk"` | `BIGSERIAL PRIMARY KEY` | `INTEGER PRIMARY KEY` |
 | campo `kyrux:"unique"` | `CREATE UNIQUE INDEX` | `CREATE UNIQUE INDEX` |
 | campo `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + `CREATE INDEX` | idem |
+| campo `kyrux:"fts"` | Índice GIN | `FULLTEXT` (MySQL) / tabela virtual FTS5 + triggers (SQLite) — diferente entre os dois, ver [Busca full-text (Search)](#busca-full-text-search) |
 
 > Para `fk:` a tabela referenciada precisa existir antes — declare o model
 > referenciado primeiro ou em uma migration anterior.
@@ -1047,6 +1048,7 @@ type Cliente struct {
 | `kyrux:"login"` | Exclusivo do `auth.User`. Marca o campo de login (username ou email). Apenas um campo por struct. Imutável após o primeiro migrate. |
 | `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo `Update` (ex: `updated_at`). Também preenche no `Create` se o campo estiver zerado. |
 | `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration. A tabela referenciada precisa existir antes (declare-a primeiro ou em migration anterior). |
+| `kyrux:"fts"` | Habilita busca full-text nativa via `Query.Search()` — ver [Busca full-text (Search)](#busca-full-text-search) abaixo. |
 
 > **`default:valor`** — quando o campo tiver valor zero Go (`""`, `0`, `false`),
 > o ORM usa o literal diretamente no SQL (`VALUES (..., NOW(), ...)`), sem passar como argumento.
@@ -1129,6 +1131,7 @@ publicados, err := orm.FromDB[Post](db).
 | `WhereIn(col string, vals ...any)` | `col IN (...)` com expansão de placeholders. Aceita slice: `WhereIn("id", ids)`. Lista vazia = nenhum resultado. |
 | `OrderBy(cols ...string)` | Define `ORDER BY` — múltiplas colunas: `OrderBy("criado_em DESC", "id ASC")`. |
 | `Join(tabela, on)` / `LeftJoin(tabela, on)` | JOIN para **filtrar** pela tabela relacionada. O SELECT vira `tabela_base.*` — o resultado continua `[]T`. |
+| `Search(col, termo)` | Busca full-text nativa numa coluna `kyrux:"fts"` — ver [Busca full-text (Search)](#busca-full-text-search) abaixo. |
 | `Select(cols ...string)` | Restringe as colunas do `SELECT` (padrão: `SELECT *`). Colunas fora da lista ficam com zero value no struct — não use para depois `Update` o registro inteiro de volta. |
 | `Distinct()` | `SELECT DISTINCT`. |
 | `Limit(n int)` | Máximo de linhas retornadas. |
@@ -1280,6 +1283,67 @@ No template:
     <a href="?page={{ add .page.Page 1 }}">Próxima →</a>
 {{ end }}
 ```
+
+### Busca full-text (Search)
+
+`LIKE`/`ILIKE` não escala (full scan) e não é preciso (falha com acentos,
+maiúsculas, plural). Busca de verdade usa o mecanismo de full-text nativo do
+banco — o Kyrux expõe isso via `Query.Search`, suportado em **três drivers**,
+cada um com seu próprio índice e sintaxe internos:
+
+| Driver | Índice gerado pelo `makemigrations` | Mecanismo de busca |
+|---|---|---|
+| `postgres`/`pgx` | `CREATE INDEX ... USING GIN (to_tsvector('portuguese', col))` | `to_tsvector`/`plainto_tsquery` + `ts_rank` |
+| `mysql` | `CREATE FULLTEXT INDEX` | `MATCH(col) AGAINST(? IN NATURAL LANGUAGE MODE)` |
+| `sqlite`/`sqlite3` | Tabela virtual `FTS5` (`<tabela>_<coluna>_fts`) + triggers de INSERT/UPDATE/DELETE que a mantêm sincronizada | `MATCH` na tabela virtual, `JOIN` pelo `rowid` |
+
+Em qualquer outro driver (`sqlserver`, `oracle`), `Search` retorna erro —
+**não existe fallback silencioso em `LIKE`**, que não seria full-text de verdade.
+
+#### Marcar o campo
+
+```go
+type Artigo struct {
+    ID       int64  `kyrux:"pk"`
+    Titulo   string `kyrux:"size:200"`
+    Conteudo string `kyrux:"fts"`
+}
+```
+
+`go run main.go makemigrations` detecta a tag e gera o índice/tabela virtual
+certos para o `DB_DRIVER` do seu `.env` automaticamente.
+
+#### Buscar
+
+```go
+artigos, err := orm.FromDB[Artigo](db).Search("conteudo", "framework golang").All()
+```
+
+- **Resultado já vem ordenado por relevância** (mais relevante primeiro) — não
+  precisa chamar `OrderBy` para isso. Se chamar `OrderBy` depois de `Search`,
+  ele só **acrescenta** um critério de desempate; a relevância continua sendo
+  o critério primário.
+- **Termos múltiplos são combinados com E, não OU** — `Search("conteudo",
+  "framework golang")` só encontra registros que contenham **as duas**
+  palavras (comportamento do `plainto_tsquery`/`MATCH...NATURAL LANGUAGE
+  MODE`/FTS5). Busque um termo por vez se quiser OU.
+- `Search` exige que a coluna tenha `kyrux:"fts"` no model — chamar em
+  qualquer outra coluna retorna erro (falha rápida, sem gerar uma busca que
+  nunca usaria índice nenhum).
+
+```go
+// Composável com o resto do builder normalmente:
+orm.FromDB[Artigo](db).
+    Search("conteudo", "kyrux").
+    Where("publicado = ?", true).
+    Limit(20).
+    All()
+```
+
+> No SQLite, `Search` adiciona um `JOIN` interno com a tabela virtual FTS5 —
+> por isso `Update`/`Delete` encadeados diretamente após `Search` são
+> rejeitados (mesma regra que já vale para `Join`/`LeftJoin`): filtre por
+> subquery no `Where` nesses casos.
 
 ### Multi-tenant com schema
 
@@ -2286,6 +2350,7 @@ orm.FromDB[T](db).Sum("col")                     // (float64, error) — também
 .WhereIn("id", ids)           // expande slice em placeholders
 .Join("users", "users.id = posts.user_id")     // filtro por relação
 .LeftJoin("users", "users.id = posts.user_id")
+.Search("conteudo", "termo")  // full-text (campo kyrux:"fts") — já ordena por relevância
 .OrderBy("col DESC", "id")    // múltiplas colunas
 .Select("id", "titulo")       // restringe colunas do SELECT (padrão: *)
 .Distinct()
@@ -2335,6 +2400,7 @@ orm.FromDB[T](db).All()  // → SELECT * FROM tenant_abc.tabela
 | `kyrux:"login"` | Exclusivo do `auth.User` — define o campo de login; imutável após migrate |
 | `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo Update; preenche no Create se zerado |
 | `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration |
+| `kyrux:"fts"` | Full-text nativo via `Query.Search` — GIN (Postgres), FULLTEXT (MySQL) ou FTS5 (SQLite) |
 
 ### Auth — todos os métodos
 
