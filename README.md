@@ -128,10 +128,12 @@ registrar e orquestrar módulos plugáveis: `Module` (Init/Configure/
 Start/Shutdown), Registry com hot-plug via `init()`, Container de DI nomeado
 (múltiplas instâncias do mesmo tipo coexistindo, ex: dois Postgres) e
 Lifecycle síncrono e ordenado, publicando eventos no `core/events.Bus`
-existente. Fase 1 de um plano maior — provado com dois adapters reais
-(`core/adapters/cachememory`, `core/adapters/sqlpostgres`) ativos ao mesmo
-tempo. GraphQL, filas externas, storage, auth e observabilidade ficam pra
-fases seguintes. Ver seção 28 do `USE.md`.
+existente. Fase 1 de um plano maior — provado com quatro adapters reais e
+testados de ponta a ponta: cache em memória, Postgres, API REST
+(`core.API.REST`, reaproveita `core/router`) e — sem sugar em `core.API`,
+pra não pesar em quem não usa (importe e ative com `core.UseModule`) —
+GraphQL e gRPC. SOAP, filas externas, storage, auth e observabilidade ficam
+pra fases seguintes. Ver seção 28 do `USE.md`.
 
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`

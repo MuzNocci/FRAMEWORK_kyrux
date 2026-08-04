@@ -45,6 +45,7 @@ type Core struct {
 
 	Database DatabaseNamespace
 	Cache    CacheNamespace
+	API      APINamespace
 }
 
 // New cria um Core vazio, pronto para ativar módulos.
@@ -57,7 +58,16 @@ func New() *Core {
 	}
 	c.Database = DatabaseNamespace{core: c, SQL: SQLNamespace{core: c}}
 	c.Cache = CacheNamespace{core: c}
+	c.API = APINamespace{core: c}
 	return c
+}
+
+// Activate ativa mod (Init, depois Configure) sem esperar que ele produza
+// um valor via Value() — para módulos cujo propósito é o efeito colateral
+// (abrir um servidor, por exemplo), não algo a ser resolvido depois no
+// Container. Para módulos que produzem um valor útil, use UseModule.
+func (c *Core) Activate(mod registry.Module) error {
+	return c.lifecycle.Add(context.Background(), mod)
 }
 
 // valuer é implementado pelos adapters que produzem um valor utilizável

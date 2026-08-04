@@ -1,10 +1,12 @@
 package core
 
 import (
+	"kyrux/core/adapters/restapi"
 	"kyrux/core/adapters/sqlpostgres"
 	"kyrux/core/cache"
 	"kyrux/core/container"
 	"kyrux/core/database"
+	"kyrux/core/router"
 )
 
 // CacheNamespace agrupa os backends de cache disponíveis como módulos do Core.
@@ -46,4 +48,17 @@ type SQLNamespace struct{ core *Core }
 func (n SQLNamespace) Postgres(name, dsn string) (*database.DB, error) {
 	mod := sqlpostgres.New(name, dsn)
 	return UseModule[*database.DB](n.core, mod, "database.sql."+name)
+}
+
+// APINamespace agrupa os protocolos de API disponíveis como módulos do Core.
+type APINamespace struct{ core *Core }
+
+// REST ativa uma API REST nomeada (por endereço) usando o mesmo motor de
+// rotas do Kyrux (core/router — o mesmo usado por bootstrap.Init, aqui com
+// seu próprio *http.Server independente). Devolve o *router.Router pronto
+// para registrar rotas (router.Handle(pattern, handler)) — o servidor só
+// escuta de verdade quando Core.Run() é chamado.
+func (n APINamespace) REST(addr string) (*router.Router, error) {
+	mod := restapi.New(addr)
+	return UseModule[*router.Router](n.core, mod, "api.rest."+addr)
 }

@@ -2683,11 +2683,16 @@ publicando eventos de fase (`lifecycle.BeforeInit`, `AfterInit`,
 (a orquestração de verdade — ordem, propagação de erro — é síncrona dentro
 do próprio `core/lifecycle`, não pelo Bus).
 
-Provado com dois adapters reais: um cache em memória
-(`core/adapters/cachememory`, hot-plug puro) e uma conexão Postgres
-(`core/adapters/sqlpostgres`, construção direta parametrizada) — os dois
-ativos ao mesmo tempo no mesmo `Core`, sem qualquer limitação de uso
-conjunto (ver teste `TestCoreCacheEPostgresCoexistindo`).
+Provado com quatro adapters reais, todos com teste de ponta a ponta real
+(requisição HTTP, query GraphQL ou chamada gRPC de verdade — nenhum mock):
+um cache em memória (`core/adapters/cachememory`, hot-plug puro), uma
+conexão Postgres (`core/adapters/sqlpostgres`), uma API REST
+(`core/adapters/restapi`, reaproveitando o `core/router` do próprio Kyrux) e
+— fora do import de `kyrux/core`, ver seção "APIs pesadas" abaixo — GraphQL
+(`core/adapters/apigraphql`) e gRPC (`core/adapters/apigrpc`). Vários
+coexistem ao mesmo tempo no mesmo `Core` sem qualquer limitação de uso
+conjunto (ver `TestCoreCacheEPostgresCoexistindo` e
+`TestCoreAPIGRPCERESTCoexistindo`).
 
 ### Ativar módulos
 
@@ -2702,6 +2707,12 @@ c := core.New()
 
 cache, err := c.Cache.Memory()
 db, err := c.Database.SQL.Postgres("principal", "postgres://user:pass@localhost/app?sslmode=disable")
+
+// core.API.REST reaproveita o core/router — devolve o Router pra registrar rotas
+api, err := c.API.REST("127.0.0.1:8081")
+api.Handle("GET /status", func(ctx *router.Context) {
+    ctx.JSON(200, map[string]string{"status": "ok"})
+})
 
 // Start em lote (na ordem de ativação) e Shutdown em lote (ordem reversa)
 if err := c.Run(); err != nil { /* ... */ }
@@ -2728,13 +2739,52 @@ func init() {
 valor, err := core.Use[*MeuTipo](c, "meu.modulo", "chave-no-container")
 ```
 
+### APIs pesadas (GraphQL, gRPC) — sem sugar em `core.API`
+
+`core.API.REST()` existe como método porque `core/router` já é dependência
+obrigatória do framework — importar de dentro de `kyrux/core` não pesa
+nada a mais. GraphQL (`github.com/graphql-go/graphql` + `handler`, que
+arrastam `html/template`/`compress/gzip`) e gRPC
+(`google.golang.org/grpc` + protobuf, HTTP/2 próprio) **não** têm esse
+privilégio — são dependências reais que a maioria dos projetos Kyrux nunca
+vai usar, então `kyrux/core` nunca as importa. Por isso não existe
+`core.API.GraphQL()`/`core.API.GRPC()`: importe o adapter você mesmo e
+ative com o `core.UseModule` genérico, exatamente como qualquer client
+NoSQL:
+
+```go
+import (
+    "kyrux/core"
+    "kyrux/core/adapters/apigrpc"
+    "google.golang.org/grpc"
+
+    pb "seu/pacote/gerado/pelo/protoc"
+)
+
+srv, err := core.UseModule[*grpc.Server](c, apigrpc.New("127.0.0.1:9090"), "api.grpc.principal")
+pb.RegisterSeuServiceServer(srv, &suaImplementacao{})
+// srv só passa a aceitar conexões em c.Run()
+```
+
+```go
+import (
+    "kyrux/core"
+    "kyrux/core/adapters/apigraphql"
+    "github.com/graphql-go/graphql"
+)
+
+schema, _ := graphql.NewSchema(graphql.SchemaConfig{Query: seuQueryType})
+_, err := core.UseModule[*graphql.Schema](c, apigraphql.New("127.0.0.1:8082", schema), "api.graphql.principal")
+// serve em POST/GET no endereço dado, com GraphiQL habilitado (desative na sua própria camada se não quiser em produção)
+```
+
 ### O que ainda não existe (roadmap, não implementado)
 
-GraphQL, gRPC, SOAP, filas externas (Kafka/RabbitMQ/NATS), storage
-(S3/MinIO), auth (OAuth2), mail (SMTP/SendGrid/SES), observabilidade
+SOAP, filas externas (Kafka/RabbitMQ/NATS), storage (S3/MinIO), auth
+(OAuth2), mail (SMTP/SendGrid/SES), observabilidade
 (Prometheus/OpenTelemetry) e a reorganização completa de `core/` em
-namespaces (`core.API`, `core.Queue`, `core.Storage`, `core.Auth`, etc.) —
-tudo isso fica para fases seguintes, uma de cada vez.
+namespaces (`core.Queue`, `core.Storage`, `core.Auth`, etc.) — tudo isso
+fica para fases seguintes, uma de cada vez.
 
 ---
 
