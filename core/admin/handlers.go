@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -21,7 +22,33 @@ const (
 	maxPageSize     = 100
 	flashSessionKey = "_admin_flash"
 	userCtxKey      = "admin_user"
+
+	// staffCheckSessionKey/staffCheckTTL: cache do resultado de IsStaff/
+	// IsAdmin na própria sessão — evita o SELECT em auth.GetUser a cada
+	// requisição. Troca revogação IMEDIATA por revogação em até
+	// staffCheckTTL (5s): uma janela pequena e previsível, aceitável em
+	// troca de eliminar a maior parte das idas ao banco numa sessão de
+	// navegação normal (vários cliques em poucos segundos reusam o mesmo
+	// cache). Só resultados POSITIVOS são cacheados — um usuário sem
+	// IsStaff/IsAdmin nunca chega a ser cacheado, então continua pagando
+	// o SELECT (e sendo barrado) em toda tentativa.
+	staffCheckSessionKey = "_admin_staff_check"
 )
+
+// staffCheckTTL é var (não const) só para permitir que os testes encolham
+// a janela temporariamente em vez de esperar 5s de verdade — nunca
+// reatribuída fora de teste.
+var staffCheckTTL = 5 * time.Second
+
+// staffCheck é o que fica cacheado na sessão — só o suficiente pra
+// reconstruir o que requireStaff/base precisam sem tocar o banco de novo.
+type staffCheck struct {
+	UserID    int64
+	Username  string
+	IsStaff   bool
+	IsAdmin   bool
+	CheckedAt time.Time
+}
 
 // navItem representa um model na navegação lateral.
 type navItem struct{ Slug, Label string }
@@ -159,9 +186,12 @@ func normalizeBasePath(basePath string) string {
 	return basePath
 }
 
-// requireStaff exige sessão ativa cujo usuário tenha IsStaff ou IsAdmin —
-// verificado a CADA requisição (não apenas no login), para que revogar o
-// acesso de um usuário tenha efeito imediato.
+// requireStaff exige sessão ativa cujo usuário tenha IsStaff ou IsAdmin.
+// O resultado positivo fica cacheado na sessão por staffCheckTTL — dentro
+// dessa janela, requisições seguintes reusam o cache em vez de repetir o
+// SELECT em auth.GetUser. Isso significa que revogar IsStaff/IsAdmin leva
+// até staffCheckTTL para ter efeito (não mais instantâneo) — ver o
+// comentário da constante para o raciocínio da troca.
 func requireStaff(dbm *database.Manager, store *session.Store, basePath string) router.MiddlewareFunc {
 	return func(next router.HandlerFunc) router.HandlerFunc {
 		return func(ctx *router.Context) {
@@ -174,11 +204,32 @@ func requireStaff(dbm *database.Manager, store *session.Store, basePath string) 
 				kyerrors.Render(ctx.Writer, ctx.Request, http.StatusServiceUnavailable)
 				return
 			}
+
+			sess, hasSess := session.FromRequest(ctx.Request, store)
+			if hasSess {
+				if v, ok := sess.Get(staffCheckSessionKey); ok {
+					if c, ok2 := v.(*staffCheck); ok2 && time.Since(c.CheckedAt) < staffCheckTTL {
+						ctx.Set(userCtxKey, &auth.User{ID: c.UserID, Username: c.Username, IsStaff: c.IsStaff, IsAdmin: c.IsAdmin})
+						next(ctx)
+						return
+					}
+				}
+			}
+
 			user, err := auth.GetUser(db, store, ctx.Request)
 			if err != nil || !(user.IsStaff || user.IsAdmin) {
 				dest := basePath + "login/?next=" + url.QueryEscape(ctx.Request.URL.RequestURI())
 				http.Redirect(ctx.Writer, ctx.Request, dest, http.StatusFound)
 				return
+			}
+			if hasSess {
+				sess.Set(staffCheckSessionKey, &staffCheck{
+					UserID:    user.ID,
+					Username:  user.Username,
+					IsStaff:   user.IsStaff,
+					IsAdmin:   user.IsAdmin,
+					CheckedAt: time.Now(),
+				})
 			}
 			ctx.Set(userCtxKey, user)
 			next(ctx)

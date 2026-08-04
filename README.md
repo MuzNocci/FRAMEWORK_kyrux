@@ -149,7 +149,8 @@ Ping/pong automático e reconexão com backoff no cliente.
 Painel de administração opt-in por model (`admin.Register[T]`) — um site só
 para todos os apps, mas nada aparece nele sem registro explícito. Layout no
 mesmo estilo da página de boas-vindas. Acesso exige `IsStaff`/`IsAdmin`,
-verificado a cada requisição; hash nunca é exibido; CSRF e brute-force
+cacheado na sessão por até 5s (revogação leva até esse tempo, não é mais
+instantânea — troca deliberada por performance); hash nunca é exibido; CSRF e brute-force
 protegidos pelos mesmos mecanismos globais do framework. Sem nenhum banco
 configurado, cria sozinho um SQLite local em `database/` (só em development —
 nunca em produção) e já gera as tabelas necessárias. `ADMIN_SUPERUSER_USERNAME`/

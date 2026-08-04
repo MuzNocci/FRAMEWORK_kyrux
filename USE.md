@@ -2047,9 +2047,13 @@ ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 
 ### Segurança
 
-- **Acesso exige `IsStaff` ou `IsAdmin`** no model `auth.User` — verificado a
-  **cada requisição**, não apenas no login. Revogar `IsStaff` de um usuário
-  encerra o acesso na próxima requisição, mesmo com a sessão ainda válida.
+- **Acesso exige `IsStaff` ou `IsAdmin`** no model `auth.User`, não apenas no
+  login. O resultado positivo fica cacheado na sessão por até 5s (evita um
+  `SELECT` a cada requisição — medido ~27x mais rápido com cache quente);
+  revogar `IsStaff` de um usuário encerra o acesso em até 5s, não mais
+  instantaneamente. Pra revogação imediata de verdade, encerre a sessão do
+  usuário diretamente (ex: `store.Delete(sessionID)`) em vez de só editar o
+  campo no banco.
 - **Login válido não implica acesso.** Um usuário sem `IsStaff`/`IsAdmin` que
   autentica corretamente no `/admin/login/` recebe "sua conta não tem
   permissão" e a sessão recém-criada é imediatamente revogada.
