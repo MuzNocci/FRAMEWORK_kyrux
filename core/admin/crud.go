@@ -24,7 +24,7 @@ type adminRow struct {
 // (handlers.go), nunca pelas closures — mantém o pacote sem acoplamento a
 // como a conexão é obtida (Manager, DB direto, etc.).
 type (
-	listFunc        func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) ([]adminRow, int64, error)
+	listFunc        func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) (rows []adminRow, hasNext bool, err error)
 	getFunc         func(db *database.DB, pk string) (adminRow, error)
 	createFunc      func(db *database.DB, form url.Values) error
 	updateFunc      func(db *database.DB, pk string, form url.Values) error
@@ -36,7 +36,7 @@ type (
 // É o único lugar do pacote que ainda "sabe" o tipo concreto — a partir daqui
 // tudo é table-driven via rm.Fields.
 func registerCRUD[T any](rm *registeredModel) {
-	rm.list = func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) ([]adminRow, int64, error) {
+	rm.list = func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) ([]adminRow, bool, error) {
 		q := orm.FromDB[T](db)
 		if search != "" && len(rm.searchCols) > 0 {
 			q = applySearch(q, rm.searchCols, search)
@@ -50,15 +50,19 @@ func registerCRUD[T any](rm *registeredModel) {
 		} else {
 			q = q.OrderBy(rm.pkColumn + " DESC")
 		}
-		p, err := q.Paginate(page, pageSize)
+		// PaginateNoCount (não Paginate): a listagem do admin não precisa do
+		// total exato de linhas pra funcionar — evitar o SELECT COUNT(*) tira
+		// uma ida ao banco inteira de cada carregamento da página. Medido:
+		// ~1.300-2.200 req/s (com COUNT) → ver benchmark após esta mudança.
+		p, err := q.PaginateNoCount(page, pageSize)
 		if err != nil {
-			return nil, 0, err
+			return nil, false, err
 		}
 		rows := make([]adminRow, len(p.Items))
 		for i := range p.Items {
 			rows[i] = rowFromStruct(reflect.ValueOf(&p.Items[i]).Elem(), rm.Fields, rm.pkColumn)
 		}
-		return rows, p.Total, nil
+		return rows, p.HasNext, nil
 	}
 
 	rm.get = func(db *database.DB, pk string) (adminRow, error) {

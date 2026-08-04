@@ -2076,7 +2076,7 @@ ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 | CRUD completo (criar, listar, editar, excluir) | ✅ |
 | Busca textual (`LIKE`) | ✅ — opt-in via `SearchFields` |
 | Ordenação por coluna (clique no cabeçalho) | ✅ |
-| Paginação | ✅ |
+| Paginação | ✅ — Anterior/Próxima, sem total exato (ver nota abaixo) |
 | hash/encrypt automático na escrita | ✅ — reaproveita `orm.Create`/`Query.Update` |
 | Múltiplas conexões | ✅ — `admin.Conn("nome")` |
 | Relações (FK como dropdown, inlines) | ❌ — campo FK aparece como número simples |
@@ -2086,6 +2086,13 @@ ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 Relações e filtros avançados ficam de fora por design nesta primeira versão —
 o objetivo é um CRUD sólido e seguro sobre um model por vez, não replicar toda
 a superfície do Django admin.
+
+A listagem usa `PaginateNoCount` internamente (não `Paginate`) — a página
+mostra "Página N" e Anterior/Próxima, mas não "N de M" nem o total de
+registros. Medido: evitar o `SELECT COUNT(*)` a cada carregamento da lista
+é ~40% mais rápido no nível do ORM (benchmark isolado, sem HTTP/sessão no
+meio). Se seu caso de uso precisa do total exato, troque para `Paginate` em
+`core/admin/crud.go` — é a única linha que muda.
 
 > `admin.Mount`, `admin.EnsureAllTables` e `admin.Count` são exportadas mas de
 > uso interno — `bootstrap.Init()` já as chama sozinho na ordem certa (depois

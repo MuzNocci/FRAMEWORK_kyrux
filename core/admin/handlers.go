@@ -77,8 +77,6 @@ type listPageData struct {
 	Search     string
 	Searchable bool
 	Page       int
-	TotalPages int
-	Total      int64
 	HasPrev    bool
 	HasNext    bool
 	PrevURL    string
@@ -355,15 +353,10 @@ func (s *site) handleList(ctx *router.Context) {
 		sortCol = ""
 	}
 
-	rows, total, err := rm.list(db, page, pageSize, search, sortCol, sortDesc)
+	rows, hasNext, err := rm.list(db, page, pageSize, search, sortCol, sortDesc)
 	if err != nil {
 		http.Error(ctx.Writer, "admin: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	totalPages := int((total + int64(pageSize) - 1) / int64(pageSize))
-	if totalPages < 1 {
-		totalPages = 1
 	}
 
 	byCol := make(map[string]adminField, len(rm.Fields))
@@ -397,10 +390,8 @@ func (s *site) handleList(ctx *router.Context) {
 		Search:     search,
 		Searchable: len(rm.searchCols) > 0,
 		Page:       page,
-		TotalPages: totalPages,
-		Total:      total,
 		HasPrev:    page > 1,
-		HasNext:    page < totalPages,
+		HasNext:    hasNext,
 		PrevURL:    buildURL(listPath, map[string]string{"q": search, "sort": sortCol, "dir": dir, "page": strconv.Itoa(page - 1)}),
 		NextURL:    buildURL(listPath, map[string]string{"q": search, "sort": sortCol, "dir": dir, "page": strconv.Itoa(page + 1)}),
 		NewURL:     listPath + "novo/",

@@ -1,6 +1,6 @@
 {{define "content"}}
 <div class="page-head">
-  <h1>{{.Label}} <span class="count">{{.Total}}</span></h1>
+  <h1>{{.Label}}</h1>
   <a href="{{.NewURL}}" class="btn btn-primary">+ Novo</a>
 </div>
 
@@ -36,7 +36,7 @@
 </table>
 </div>
 <div class="pagination">
-  <span>Página {{.Page}} de {{.TotalPages}}</span>
+  <span>Página {{.Page}}</span>
   <div>
     {{if .HasPrev}}<a href="{{.PrevURL}}">&#8592; Anterior</a>{{else}}<span class="disabled">&#8592; Anterior</span>{{end}}
     &nbsp;&middot;&nbsp;
