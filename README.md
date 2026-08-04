@@ -108,6 +108,13 @@ partition key (sem JOIN, sem WHERE arbitrário sem `ALLOW FILTERING`), então
 `Exec`/`SelectMap`/`Select[T]` refletem essa restrição real em vez de
 fingir um SQL completo. Não importado por `core/bootstrap`.
 
+### Elasticsearch
+Client dedicado (`core/nosql/elasticsearch`) — motor de busca/documentos:
+Query DSL em JSON, sem JOIN, sem transações, busca em quase tempo real
+(`Index[T].Refresh()` força ver gravações recentes, use com moderação fora
+de testes). `IndexOf[T]` dá Put/Get/Search/Count/Delete idiomáticos sobre o
+driver oficial. Não importado por `core/bootstrap`.
+
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
 (broadcast global) e variantes `*For` com escopo de sessão para conteúdo por usuário.

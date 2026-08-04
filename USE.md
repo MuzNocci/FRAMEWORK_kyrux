@@ -32,6 +32,7 @@ Criado por Müller Nocciolli · [framework.kyrux.com.br/docs](https://framework.
 23. [MongoDB (NoSQL)](#23-mongodb-nosql)
 24. [Redis como banco (NoSQL)](#24-redis-como-banco-nosql)
 25. [Cassandra (NoSQL)](#25-cassandra-nosql)
+26. [Elasticsearch (NoSQL)](#26-elasticsearch-nosql)
 
 ---
 
@@ -2528,6 +2529,67 @@ este wrapper poderia (ou deveria) contornar.
 `client.Raw()` devolve a `*gocql.Session` nativa do driver oficial — para
 batches, paginação manual (`PageState`), políticas de retry customizadas e
 qualquer coisa que este wrapper não cobre.
+
+---
+
+## 26. Elasticsearch (NoSQL)
+
+Elasticsearch é um motor de busca/documentos, não um banco transacional:
+índices sem schema fixo (mapping dinâmico), consultas via **Query DSL em
+JSON** (não SQL), sem `JOIN`, sem transações ACID, e busca em **quase tempo
+real** — um documento gravado só aparece numa busca depois do próximo
+refresh do índice (padrão ~1s; por isso `Index[T].Refresh()` existe, para
+testes e casos onde você precisa ver o documento imediatamente).
+
+Mesmo padrão dos outros: **não é importado por `core/bootstrap`** — o
+driver oficial (`github.com/elastic/go-elasticsearch/v8`) só entra no
+binário se você mesmo importar `kyrux/core/nosql/elasticsearch`.
+
+### Usar
+
+```go
+import "kyrux/core/nosql/elasticsearch"
+
+c, err := elasticsearch.New([]string{"http://localhost:9200"})
+
+type Artigo struct {
+    Titulo   string `json:"titulo"`
+    Conteudo string `json:"conteudo"`
+    Ativo    bool   `json:"ativo"`
+}
+
+artigos := elasticsearch.IndexOf[Artigo](c, "artigos")
+ctx := context.Background()
+
+// Gravar (id vazio = Elasticsearch gera um ID automaticamente)
+id, err := artigos.Put(ctx, "1", &Artigo{Titulo: "Kyrux", Conteudo: "framework em Go", Ativo: true})
+
+// Buscar por ID
+doc, found, err := artigos.Get(ctx, "1")
+
+// Buscar por Query DSL (documento JSON — map[string]any já resolve a
+// maioria dos casos, sem precisar de outro import)
+resultados, err := artigos.Search(ctx, map[string]any{
+    "query": map[string]any{
+        "match": map[string]any{"conteudo": "golang"},
+    },
+})
+
+// Contar
+total, err := artigos.Count(ctx, nil) // nil = conta o índice inteiro
+
+// Remover
+err = artigos.Delete(ctx, "1")
+
+// Só em testes / quando precisar ver a gravação imediatamente:
+err = artigos.Refresh(ctx)
+```
+
+### Escape hatch
+
+`client.Raw()` devolve o `*elasticsearch.Client` nativo do driver oficial —
+para agregações, bulk API, ILM (index lifecycle management) e qualquer
+coisa que este wrapper não cobre.
 
 ---
 
