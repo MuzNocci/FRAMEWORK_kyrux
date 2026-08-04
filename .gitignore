@@ -55,3 +55,7 @@ Thumbs.db
 # ADMIN_ENABLED=true e nenhum banco está configurado)
 /database/*
 /database/
+
+# Notas internas de benchmark — comparativo pontual, não é documentação
+# oficial do sistema (essa fica em README.md/USE.md)
+/BENCHMARK.md
