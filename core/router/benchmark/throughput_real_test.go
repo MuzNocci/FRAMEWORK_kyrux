@@ -60,8 +60,8 @@ import (
 	"kyrux/core/render"
 	"kyrux/core/security/auth"
 
-	_ "kyrux/core/apps"
 	_ "github.com/lib/pq"
+	_ "kyrux/core/apps"
 )
 
 // testParamByName substitui parâmetros pelo nome da variável.

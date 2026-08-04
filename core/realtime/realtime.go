@@ -72,15 +72,27 @@ func (h *Hub) sendDOMFor(sessionID, target, html, action string) {
 	h.sendDOM(sessionID, target, html, action)
 }
 
-func (h *Hub) ReplaceFor(sessionID, target, html string) { h.sendDOMFor(sessionID, target, html, "replace") }
-func (h *Hub) AppendFor(sessionID, target, html string)  { h.sendDOMFor(sessionID, target, html, "append") }
-func (h *Hub) PrependFor(sessionID, target, html string) { h.sendDOMFor(sessionID, target, html, "prepend") }
-func (h *Hub) RemoveFor(sessionID, target string)        { h.sendDOMFor(sessionID, target, "", "remove") }
+func (h *Hub) ReplaceFor(sessionID, target, html string) {
+	h.sendDOMFor(sessionID, target, html, "replace")
+}
+func (h *Hub) AppendFor(sessionID, target, html string) {
+	h.sendDOMFor(sessionID, target, html, "append")
+}
+func (h *Hub) PrependFor(sessionID, target, html string) {
+	h.sendDOMFor(sessionID, target, html, "prepend")
+}
+func (h *Hub) RemoveFor(sessionID, target string) { h.sendDOMFor(sessionID, target, "", "remove") }
 
 // Variantes *TextFor: por sessão e seguras para conteúdo do usuário (textContent).
-func (h *Hub) ReplaceTextFor(sessionID, target, text string) { h.sendDOMFor(sessionID, target, text, "replace-text") }
-func (h *Hub) AppendTextFor(sessionID, target, text string)  { h.sendDOMFor(sessionID, target, text, "append-text") }
-func (h *Hub) PrependTextFor(sessionID, target, text string) { h.sendDOMFor(sessionID, target, text, "prepend-text") }
+func (h *Hub) ReplaceTextFor(sessionID, target, text string) {
+	h.sendDOMFor(sessionID, target, text, "replace-text")
+}
+func (h *Hub) AppendTextFor(sessionID, target, text string) {
+	h.sendDOMFor(sessionID, target, text, "append-text")
+}
+func (h *Hub) PrependTextFor(sessionID, target, text string) {
+	h.sendDOMFor(sessionID, target, text, "prepend-text")
+}
 
 type Hub struct {
 	mu             sync.RWMutex

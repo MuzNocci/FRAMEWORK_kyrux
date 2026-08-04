@@ -155,12 +155,12 @@ func TestBuildURLSemParametrosNaoAdicionaInterrogacao(t *testing.T) {
 
 func TestNormalizeBasePath(t *testing.T) {
 	cases := map[string]string{
-		"":          "/admin/",
-		"admin":     "/admin/",
-		"/admin":    "/admin/",
-		"admin/":    "/admin/",
-		"/painel/":  "/painel/",
-		"/custom":   "/custom/",
+		"":         "/admin/",
+		"admin":    "/admin/",
+		"/admin":   "/admin/",
+		"admin/":   "/admin/",
+		"/painel/": "/painel/",
+		"/custom":  "/custom/",
 	}
 	for in, want := range cases {
 		if got := normalizeBasePath(in); got != want {

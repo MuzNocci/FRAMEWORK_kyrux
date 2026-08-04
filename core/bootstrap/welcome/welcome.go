@@ -1,9 +1,9 @@
 package welcome
 
 import (
-	_ "embed"
 	"bytes"
 	"crypto/sha256"
+	_ "embed"
 	"fmt"
 	"html/template"
 	"kyrux/core/router"
