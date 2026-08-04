@@ -303,7 +303,7 @@ type Cliente struct {
 | Driver | Módulo Go | Observação |
 |---|---|---|
 | `postgres` | `github.com/lib/pq` | |
-| `pgx` | `github.com/jackc/pgx/v5/stdlib` | Melhor performance |
+| `pgx` | `github.com/jackc/pgx/v5/stdlib` | Mais moderno, mas ~15-25% mais lento que `postgres` via `database/sql` (medido) |
 | `mysql` | `github.com/go-sql-driver/mysql` | Também MariaDB |
 | `sqlite` | `modernc.org/sqlite` | Sem CGO |
 | `sqlite3` | `github.com/mattn/go-sqlite3` | Requer CGO |

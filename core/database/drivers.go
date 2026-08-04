@@ -26,10 +26,16 @@ package database
 //   módulo: github.com/lib/pq
 //   dsn:    postgres://user:password@host:5432/dbname?sslmode=disable
 //
-// PostgreSQL (pgx — melhor performance)
+// PostgreSQL (pgx)
 //   driver: "pgx"
 //   módulo: github.com/jackc/pgx/v5/stdlib
 //   dsn:    postgres://user:password@host:5432/dbname?sslmode=disable
+//   nota:   mais ativo/moderno que lib/pq, mas NÃO é mais rápido aqui —
+//           medido ~15-25% mais lento que lib/pq num SELECT de 20 linhas
+//           via database/sql (a vantagem de protocolo binário do pgx só
+//           aparece na API nativa dele, fora de database/sql — que é como
+//           o ORM sempre usa). Prefira lib/pq a menos que precise de algum
+//           recurso específico do pgx.
 //
 // MySQL / MariaDB
 //   driver: "mysql"
