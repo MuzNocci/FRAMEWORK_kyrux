@@ -33,6 +33,7 @@ Criado por Müller Nocciolli · [framework.kyrux.com.br/docs](https://framework.
 24. [Redis como banco (NoSQL)](#24-redis-como-banco-nosql)
 25. [Cassandra (NoSQL)](#25-cassandra-nosql)
 26. [Elasticsearch (NoSQL)](#26-elasticsearch-nosql)
+27. [DynamoDB (NoSQL)](#27-dynamodb-nosql)
 
 ---
 
@@ -2589,6 +2590,73 @@ err = artigos.Refresh(ctx)
 
 `client.Raw()` devolve o `*elasticsearch.Client` nativo do driver oficial —
 para agregações, bulk API, ILM (index lifecycle management) e qualquer
+coisa que este wrapper não cobre.
+
+---
+
+## 27. DynamoDB (NoSQL)
+
+DynamoDB não tem linguagem de query — é uma API de operações sobre uma
+chave primária obrigatória (partition key, + sort key opcional):
+`GetItem` exige a chave exata; `Query` filtra pela partition key (e uma
+condição na sort key); qualquer outro filtro exige `Scan` — varredura da
+tabela inteira, cara e lenta — ou um Global Secondary Index criado
+antecipadamente. Sem `JOIN`. `core/nosql/dynamodb` reflete essas operações
+tal como existem, em vez de fingir um `WHERE` genérico.
+
+Mesmo padrão dos outros: **não é importado por `core/bootstrap`**. Vale um
+destaque a mais aqui: o SDK oficial da AWS (`aws-sdk-go-v2`) é uma
+dependência pesada de verdade — medimos **~5,4 MB (~20%)** de aumento no
+binário quando o client é efetivamente usado (não só importado — a
+eliminação de código morto do linker Go some com boa parte do peso de um
+import nunca chamado, então o número real só aparece quando você constrói
+um client de fato). Ainda mais motivo pra só importar se for usar.
+
+### Ativar
+
+```go
+import "kyrux/core/nosql/dynamodb"
+
+// endpoint vazio = AWS de verdade, credenciais pela cadeia padrão do SDK
+// (env vars, ~/.aws/credentials, role IAM). endpoint não-vazio (ex:
+// DynamoDB Local em dev) exige accessKey/secretKey explícitos — o serviço
+// não valida essas credenciais, mas o SDK exige que existam estruturalmente.
+c, err := dynamodb.New(ctx, "us-east-1", "http://localhost:8000", "dummy", "dummy")
+```
+
+### Usar
+
+```go
+type Produto struct {
+    PK    string  `dynamodbav:"pk"`
+    SK    string  `dynamodbav:"sk"`
+    Nome  string  `dynamodbav:"nome"`
+    Preco float64 `dynamodbav:"preco"`
+}
+
+produtos := dynamodb.TableOf[Produto](c, "produtos")
+
+// Gravar (cria ou substitui o item inteiro)
+err := produtos.Put(ctx, &Produto{PK: "produto#1", SK: "meta", Nome: "Caneca", Preco: 29.9})
+
+// Buscar pela chave primária exata
+p, found, err := produtos.Get(ctx, map[string]any{"pk": "produto#1", "sk": "meta"})
+
+// Buscar pela partition key (+ condição opcional na sort key) — a forma
+// eficiente de filtrar, sem Scan
+itens, err := produtos.Query(ctx, "pk = :pk", map[string]any{":pk": "produto#1"})
+
+// Remover
+err = produtos.Delete(ctx, map[string]any{"pk": "produto#1", "sk": "meta"})
+
+// Varredura completa — caro, evite em tabelas grandes ou caminho quente
+todos, err := produtos.Scan(ctx)
+```
+
+### Escape hatch
+
+`client.Raw()` devolve o `*dynamodb.Client` nativo do SDK oficial — para
+transações (`TransactWriteItems`), batch operations, streams e qualquer
 coisa que este wrapper não cobre.
 
 ---

@@ -115,6 +115,13 @@ Query DSL em JSON, sem JOIN, sem transações, busca em quase tempo real
 de testes). `IndexOf[T]` dá Put/Get/Search/Count/Delete idiomáticos sobre o
 driver oficial. Não importado por `core/bootstrap`.
 
+### DynamoDB
+Client dedicado (`core/nosql/dynamodb`) — sem linguagem de query: `Get`
+exige a chave primária exata, `Query` filtra pela partition key, `Scan`
+varre a tabela inteira (caro, evite). SDK oficial da AWS é uma dependência
+pesada de verdade — medido: **~5,4 MB (~20%)** no binário quando o client é
+efetivamente usado. Não importado por `core/bootstrap`.
+
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
 (broadcast global) e variantes `*For` com escopo de sessão para conteúdo por usuário.
