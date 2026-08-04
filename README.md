@@ -122,6 +122,17 @@ varre a tabela inteira (caro, evite). SDK oficial da AWS é uma dependência
 pesada de verdade — medido: **~5,4 MB (~20%)** no binário quando o client é
 efetivamente usado. Não importado por `core/bootstrap`.
 
+### Core (fundação modular) — experimental
+`kyrux/core` — camada adicional (não substitui `bootstrap`/`Framework`) pra
+registrar e orquestrar módulos plugáveis: `Module` (Init/Configure/
+Start/Shutdown), Registry com hot-plug via `init()`, Container de DI nomeado
+(múltiplas instâncias do mesmo tipo coexistindo, ex: dois Postgres) e
+Lifecycle síncrono e ordenado, publicando eventos no `core/events.Bus`
+existente. Fase 1 de um plano maior — provado com dois adapters reais
+(`core/adapters/cachememory`, `core/adapters/sqlpostgres`) ativos ao mesmo
+tempo. GraphQL, filas externas, storage, auth e observabilidade ficam pra
+fases seguintes. Ver seção 28 do `USE.md`.
+
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
 (broadcast global) e variantes `*For` com escopo de sessão para conteúdo por usuário.

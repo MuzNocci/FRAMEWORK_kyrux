@@ -2661,6 +2661,83 @@ coisa que este wrapper não cobre.
 
 ---
 
+## 28. Core (fundação modular) — experimental
+
+`kyrux/core` é uma camada **adicional** para registrar, ativar e orquestrar
+módulos plugáveis (bancos, caches, e no futuro filas/storage/protocolos) de
+forma uniforme. É experimental e **não substitui nada**: `bootstrap.Init`,
+`Framework`, `fw.DB`/`fw.Cache`/`fw.Queue` e todo o resto continuam
+funcionando exatamente como antes, sem precisar tocar em uma linha para
+adotar (ou ignorar) este pacote.
+
+Esta é a fundação (fase 1 de um plano maior — ver Referência Rápida abaixo
+para o que ainda falta): `Module`, um Registry com self-registro via `init()`
+(hot-plug: importar o pacote do adapter já disponibiliza o módulo, sem o
+`core` nunca importar o adapter em si), um Container de DI simples (nomeado,
+não por tipo — permite múltiplas instâncias do mesmo tipo, ex: dois bancos
+Postgres coexistindo) e um Lifecycle que orquestra Init→Configure (na
+ativação) e Start/Shutdown (em lote, este último em ordem reversa) —
+publicando eventos de fase (`lifecycle.BeforeInit`, `AfterInit`,
+`BeforeStart`, `AfterStart`, `BeforeShutdown`, `AfterShutdown`) no mesmo
+`core/events.Bus` já existente, sempre de forma assíncrona/best-effort
+(a orquestração de verdade — ordem, propagação de erro — é síncrona dentro
+do próprio `core/lifecycle`, não pelo Bus).
+
+Provado com dois adapters reais: um cache em memória
+(`core/adapters/cachememory`, hot-plug puro) e uma conexão Postgres
+(`core/adapters/sqlpostgres`, construção direta parametrizada) — os dois
+ativos ao mesmo tempo no mesmo `Core`, sem qualquer limitação de uso
+conjunto (ver teste `TestCoreCacheEPostgresCoexistindo`).
+
+### Ativar módulos
+
+```go
+import (
+    "kyrux/core"
+    _ "kyrux/core/adapters/cachememory" // hot-plug: só entra no binário se importado
+    _ "github.com/lib/pq"               // driver Postgres — o Core nunca importa drivers
+)
+
+c := core.New()
+
+cache, err := c.Cache.Memory()
+db, err := c.Database.SQL.Postgres("principal", "postgres://user:pass@localhost/app?sslmode=disable")
+
+// Start em lote (na ordem de ativação) e Shutdown em lote (ordem reversa)
+if err := c.Run(); err != nil { /* ... */ }
+defer c.Shutdown()
+
+// Buscar uma conexão ativada em outro lugar da aplicação, pelo nome usado:
+db2, ok := c.Database.Get("principal")
+```
+
+### Hot-plug para módulos sem parâmetros
+
+Qualquer módulo parametrizado é construído diretamente pelo seu próprio
+pacote e ativado com `core.UseModule`; módulos sem parâmetros (config lida
+de variáveis de ambiente dentro do próprio adapter, por exemplo) podem se
+autorregistrar por nome e ser ativados sem o `core` conhecer o adapter:
+
+```go
+// No pacote do seu adapter:
+func init() {
+    registry.Register("meu.modulo", func() registry.Module { return &MeuAdapter{} })
+}
+
+// Em qualquer lugar da aplicação, depois de importar (mesmo que só com _) o pacote acima:
+valor, err := core.Use[*MeuTipo](c, "meu.modulo", "chave-no-container")
+```
+
+### O que ainda não existe (roadmap, não implementado)
+
+GraphQL, gRPC, SOAP, filas externas (Kafka/RabbitMQ/NATS), storage
+(S3/MinIO), auth (OAuth2), mail (SMTP/SendGrid/SES), observabilidade
+(Prometheus/OpenTelemetry) e a reorganização completa de `core/` em
+namespaces (`core.API`, `core.Queue`, `core.Storage`, `core.Auth`, etc.) —
+tudo isso fica para fases seguintes, uma de cada vez.
+
+---
+
 ## Referência Rápida
 
 ### Context — todos os métodos
