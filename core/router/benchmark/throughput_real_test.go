@@ -6,6 +6,28 @@ package benchmark_test
 // e descobre todas as rotas GET via fw.Router.Routes(). Cada rota é testada
 // individualmente via TCP real durante 5 segundos.
 //
+// Duas correções em relação a uma versão anterior deste teste, as duas
+// descobertas medindo os números com desconfiança em vez de aceitar valores
+// que "pareciam" corretos:
+//
+//  1. As rotas de admin (exceto /admin/login/) exigem sessão autenticada
+//     (requireStaff) — sem login, todo request é redirecionado pra
+//     /admin/login/, e como http.Client segue redirect por padrão e reporta
+//     o status FINAL, o teste estava medindo o custo de renderizar a
+//     página de LOGIN pra toda rota protegida, não a rota de verdade. Este
+//     teste agora autentica de verdade (loginAsAdmin) antes de medir essas
+//     rotas.
+//  2. Sem cookiejar, cada requisição chegava sem o cookie CSRF — o
+//     middleware gerava um token novo via crypto/rand a cada vez (custo
+//     real, e ruído entre rodadas) em vez de reaproveitar um, como um
+//     cliente de verdade faria. Todo client usado neste teste agora carrega
+//     um cookiejar persistente.
+//
+// Além disso, registra um model real no admin (com dados seedados) antes
+// do bootstrap — sem isso, /admin/<slug>/ e /admin/<slug>/<pk>/ não
+// existiriam nas rotas descobertas (0 models = admin sem CRUD nenhum), e o
+// benchmark não estaria testando nada representativo de uso real.
+//
 // Rotas com parâmetros de path recebem valores de exemplo definidos em
 // testParamByName e testParamByType. Ajuste esses mapas se alguma rota
 // precisar de um ID ou slug específico que exista no banco.
@@ -16,8 +38,11 @@ package benchmark_test
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"regexp"
 	"runtime"
@@ -28,10 +53,14 @@ import (
 	"testing"
 	"time"
 
-	_ "kyrux/core/apps"
+	"kyrux/core/admin"
 	"kyrux/core/bootstrap"
+	"kyrux/core/database"
+	"kyrux/core/orm"
 	"kyrux/core/render"
+	"kyrux/core/security/auth"
 
+	_ "kyrux/core/apps"
 	_ "github.com/lib/pq"
 )
 
@@ -68,6 +97,154 @@ func resolveTestURL(path string) string {
 	})
 }
 
+// ── model real de benchmark pro admin ────────────────────────────────────
+
+const (
+	throughputBenchSlug      = "throughput-bench"
+	throughputBenchTable     = "throughput_bench_produtos"
+	throughputBenchSeedCount = 200
+)
+
+type throughputBenchProduto struct {
+	ID    int64 `kyrux:"pk"`
+	Nome  string
+	Preco float64
+}
+
+// registerThroughputBenchModel registra o model no admin — precisa
+// acontecer ANTES de bootstrap.Init (admin.Mount lê o registry nesse
+// momento). O recover cobre reexecução no mesmo processo (ex: -count=2):
+// registrar o mesmo slug duas vezes é panic por design do pacote admin.
+func registerThroughputBenchModel() {
+	defer func() { _ = recover() }()
+	admin.Register[throughputBenchProduto](throughputBenchSlug, "Produtos (benchmark)")
+}
+
+// seedThroughputBenchTable cria e popula a tabela do model de benchmark —
+// só Postgres/pgx (mesma convenção do resto da suíte). Idempotente: dropa
+// e recria a cada execução.
+func seedThroughputBenchTable(db *database.DB) error {
+	if _, err := db.Exec("DROP TABLE IF EXISTS " + throughputBenchTable); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE TABLE ` + throughputBenchTable + ` (
+		id BIGSERIAL PRIMARY KEY,
+		nome VARCHAR(120) NOT NULL DEFAULT '',
+		preco DOUBLE PRECISION NOT NULL DEFAULT 0
+	)`); err != nil {
+		return fmt.Errorf("create table: %w", err)
+	}
+	seed := make([]*throughputBenchProduto, 0, throughputBenchSeedCount)
+	for i := 0; i < throughputBenchSeedCount; i++ {
+		seed = append(seed, &throughputBenchProduto{Nome: fmt.Sprintf("Produto %d", i), Preco: float64(i) * 1.5})
+	}
+	return orm.CreateAll(db, seed)
+}
+
+// ── usuário staff exclusivo do benchmark ─────────────────────────────────
+//
+// Não reaproveita ADMIN_SUPERUSER_USERNAME/PASSWORD do .env nem
+// auth.EnsureSuperuser: esse mecanismo nunca redefine a senha de uma conta
+// já existente (proteção correta em produção — evita reset silencioso a
+// cada boot), mas isso significa que não há garantia de qual senha está
+// de fato salva numa conta "admin" que já existia no banco antes deste
+// teste. Um usuário dedicado, sempre recriado do zero com senha conhecida,
+// evita essa dependência de estado externo.
+
+const (
+	throughputBenchStaffUsername = "kyrux_throughput_bench"
+	throughputBenchStaffPassword = "kyrux-throughput-bench-2026!"
+)
+
+// ensureThroughputBenchStaffUser recria (delete + create) o usuário staff
+// do benchmark, garantindo senha conhecida independente do que já existia.
+func ensureThroughputBenchStaffUser(db *database.DB) error {
+	if err := orm.FromDB[auth.User](db).Where("username = ?", throughputBenchStaffUsername).Delete(); err != nil {
+		return fmt.Errorf("remover usuário anterior: %w", err)
+	}
+	user := &auth.User{
+		UUID:      "00000000-0000-0000-0000-000000000001",
+		Username:  throughputBenchStaffUsername,
+		IsAdmin:   true,
+		IsStaff:   true,
+		IsActive:  true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := user.SetPassword(throughputBenchStaffPassword); err != nil {
+		return fmt.Errorf("hash da senha: %w", err)
+	}
+	if err := orm.Create(db, user); err != nil {
+		return fmt.Errorf("criar usuário: %w", err)
+	}
+	return nil
+}
+
+// ── autenticação real pras rotas protegidas do admin ─────────────────────
+
+var reCSRFToken = regexp.MustCompile(`name="kyrux_csrf_token" value="([a-f0-9]+)"`)
+
+// loginAsAdmin autentica client (deve ter Jar configurado — ver
+// newPooledClient) como o usuário de throughputBenchStaffUsername/Password
+// (ver ensureThroughputBenchStaffUser). Faz o fluxo completo de verdade:
+// GET a página de login (pega o cookie CSRF e extrai o token do form
+// renderizado), POST com as credenciais + token. Devolve o próprio client
+// (já autenticado) se tudo der certo; nil se qualquer etapa falhar — o
+// chamador decide se prossegue sem
+// autenticação (medindo menos rotas) ou aborta.
+func loginAsAdmin(t *testing.T, base string, client *http.Client) *http.Client {
+	t.Helper()
+
+	resp, err := client.Get(base + "/admin/login/")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Logf("loginAsAdmin: GET /admin/login/ falhou (status=%v, err=%v)", statusOf(resp), err)
+		return nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Logf("loginAsAdmin: ler corpo do login: %v", err)
+		return nil
+	}
+
+	m := reCSRFToken.FindSubmatch(body)
+	if m == nil {
+		t.Log("loginAsAdmin: token CSRF não encontrado na página de login")
+		return nil
+	}
+
+	form := url.Values{
+		"login":            {throughputBenchStaffUsername},
+		"password":         {throughputBenchStaffPassword},
+		"kyrux_csrf_token": {string(m[1])},
+	}
+	resp2, err := client.PostForm(base+"/admin/login/", form)
+	if err != nil {
+		t.Logf("loginAsAdmin: POST /admin/login/: %v", err)
+		return nil
+	}
+	resp2.Body.Close()
+
+	// PostForm segue o redirect de sucesso (POST-redirect-GET) — se o
+	// login falhar, handleLoginSubmit RE-RENDERIZA o próprio form de login
+	// (sem redirect), então resp2.Request.URL ainda aponta pra
+	// /admin/login/. Só considera autenticado se saiu de lá de verdade.
+	if resp2.StatusCode != http.StatusOK || resp2.Request.URL.Path == "/admin/login/" {
+		t.Logf("loginAsAdmin: login não confirmado (status=%d, path final=%s)", resp2.StatusCode, resp2.Request.URL.Path)
+		return nil
+	}
+	return client
+}
+
+func statusOf(resp *http.Response) any {
+	if resp == nil {
+		return nil
+	}
+	return resp.StatusCode
+}
+
+// ── benchmark ─────────────────────────────────────────────────────────────
+
 func TestThroughputReal(t *testing.T) {
 	render.AppsDir = "../../../apps"
 
@@ -77,9 +254,33 @@ func TestThroughputReal(t *testing.T) {
 	os.Setenv("SECRET_KEY", "kyrux-benchmark-secret-key-placeholder-32")
 	os.Setenv("PASSWORD_PEPPER", "kyrux-benchmark-pepper-placeholder-32ch")
 
+	// Precisa acontecer antes de bootstrap.Init — admin.Mount lê o registry
+	// nesse momento; depois disso, registrar não teria efeito nas rotas.
+	registerThroughputBenchModel()
+
 	fw, err := bootstrap.Init("../../../.env")
 	if err != nil {
 		t.Fatalf("bootstrap.Init: %v", err)
+	}
+
+	// Popula o model de benchmark — sem isso, /admin/throughput-bench/ e
+	// /admin/throughput-bench/<pk>/ existiriam nas rotas mas seriam listas
+	// vazias, não representativas de uso real.
+	adminBenchReady := false
+	if db := fw.DB.Use(); db != nil && db.Ping() == nil && (db.Driver == "postgres" || db.Driver == "pgx") {
+		if err := seedThroughputBenchTable(db); err != nil {
+			t.Fatalf("seed do model de benchmark: %v", err)
+		}
+		if err := ensureThroughputBenchStaffUser(db); err != nil {
+			t.Fatalf("criar usuário staff de benchmark: %v", err)
+		}
+		adminBenchReady = true
+		defer db.Exec("DROP TABLE IF EXISTS " + throughputBenchTable)
+		defer orm.FromDB[auth.User](db).Where("username = ?", throughputBenchStaffUsername).Delete()
+		testParamByName["slug"] = throughputBenchSlug
+		testParamByName["pk"] = "1"
+	} else {
+		t.Log("banco indisponível ou driver != postgres/pgx — pulando seed do model de benchmark (rotas /admin/<slug>/ ficam sem dado real)")
 	}
 
 	// Se habilitado, captura perfis CPU/heap via runtime/pprof.
@@ -105,8 +306,9 @@ func TestThroughputReal(t *testing.T) {
 	}
 
 	type scenario struct {
-		pattern string
-		url     string
+		pattern   string
+		url       string
+		protected bool // true = exige sessão staff/admin (requireStaff)
 	}
 
 	var scenarios []scenario
@@ -114,9 +316,11 @@ func TestThroughputReal(t *testing.T) {
 		if r.Method != "GET" {
 			continue
 		}
+		protected := strings.HasPrefix(r.Path, "/admin/") && r.Path != "/admin/login/"
 		scenarios = append(scenarios, scenario{
-			pattern: r.Path,
-			url:     resolveTestURL(r.Path),
+			pattern:   r.Path,
+			url:       resolveTestURL(r.Path),
+			protected: protected,
 		})
 	}
 
@@ -149,10 +353,57 @@ func TestThroughputReal(t *testing.T) {
 	)
 	concurrency := workers * goroutines
 
-	warmupClient := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: workers * 8}}
+	// newPooledClient monta um client com pool de conexões dimensionado pra
+	// concurrency (sem isso, o default do Go — 2 idle conns por host —
+	// forçaria abertura de conexão nova a cada request, medindo o custo de
+	// handshake TCP em vez do handler) e um cookiejar persistente (evita
+	// que o middleware CSRF gere um token novo via crypto/rand a cada
+	// requisição — custo real e ruído que um cliente de verdade não paga).
+	newPooledClient := func() *http.Client {
+		jar, _ := cookiejar.New(nil)
+		return &http.Client{
+			Jar: jar,
+			Transport: &http.Transport{
+				MaxIdleConns:        concurrency,
+				MaxIdleConnsPerHost: concurrency,
+				IdleConnTimeout:     30 * time.Second,
+			},
+		}
+	}
+
+	// Autentica uma vez — todas as goroutines concorrentes de uma rota
+	// protegida reusam a MESMA sessão (equivalente a um usuário staff com
+	// várias abas abertas), em vez de pagar login (hash de senha) por
+	// requisição, o que mediria outra coisa.
+	var authedClient *http.Client
+	if adminBenchReady {
+		authedClient = loginAsAdmin(t, base, newPooledClient())
+		if authedClient == nil {
+			t.Log("autenticação falhou — rotas protegidas do admin serão puladas nesta rodada")
+		}
+	}
+
+	plainClient := newPooledClient()
+
+	clientFor := func(sc scenario) *http.Client {
+		if sc.protected && authedClient != nil {
+			return authedClient
+		}
+		return plainClient
+	}
+
+	var tested []scenario
 	for _, sc := range scenarios {
+		if sc.protected && authedClient == nil {
+			continue // sem sessão válida, não dá pra medir a rota de verdade
+		}
+		tested = append(tested, sc)
+	}
+
+	for _, sc := range tested {
+		c := clientFor(sc)
 		for i := 0; i < workers*5; i++ {
-			resp, err := warmupClient.Get(base + sc.url)
+			resp, err := c.Get(base + sc.url)
 			if err == nil {
 				resp.Body.Close()
 			}
@@ -165,18 +416,15 @@ func TestThroughputReal(t *testing.T) {
 	fmt.Printf("║  Workers (SERVER_WORKERS): %-4d                      ║\n", workers)
 	fmt.Printf("║  Goroutines clientes:      %-4d (%d por worker)      ║\n", concurrency, goroutines)
 	fmt.Printf("║  Duração por cenário:  %-4s                          ║\n", duration)
-	fmt.Printf("║  Rotas testadas:       %-4d                          ║\n", len(scenarios))
+	fmt.Printf("║  Rotas testadas:       %-4d                          ║\n", len(tested))
+	if adminBenchReady {
+		fmt.Printf("║  Sessão admin:         %-4s                          ║\n", map[bool]string{true: "autenticada", false: "falhou"}[authedClient != nil])
+	}
 	fmt.Printf("╚══════════════════════════════════════════════════════╝\n\n")
 
-	for _, sc := range scenarios {
+	for _, sc := range tested {
+		c := clientFor(sc)
 		var total, errs atomic.Int64
-
-		transport := &http.Transport{
-			MaxIdleConns:        concurrency,
-			MaxIdleConnsPerHost: concurrency,
-			IdleConnTimeout:     30 * time.Second,
-		}
-		client := &http.Client{Transport: transport}
 
 		deadline := time.Now().Add(duration)
 		var wg sync.WaitGroup
@@ -186,7 +434,7 @@ func TestThroughputReal(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for time.Now().Before(deadline) {
-					resp, err := client.Get(base + sc.url)
+					resp, err := c.Get(base + sc.url)
 					if err != nil {
 						errs.Add(1)
 						continue
