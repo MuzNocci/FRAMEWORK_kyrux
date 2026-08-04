@@ -31,6 +31,7 @@ Criado por Müller Nocciolli · [framework.kyrux.com.br/docs](https://framework.
 22. [Performance](#22-performance)
 23. [MongoDB (NoSQL)](#23-mongodb-nosql)
 24. [Redis como banco (NoSQL)](#24-redis-como-banco-nosql)
+25. [Cassandra (NoSQL)](#25-cassandra-nosql)
 
 ---
 
@@ -2470,6 +2471,63 @@ do ORM e ao `mongo.ErrNoDocuments` do client Mongo).
 `client.Raw()` devolve o `*redis.Client` nativo do driver oficial
 (`github.com/redis/go-redis/v9`) — para scripts Lua, pipelines e
 transações (`MULTI`/`EXEC`) que este wrapper não cobre.
+
+---
+
+## 25. Cassandra (NoSQL)
+
+CQL (Cassandra Query Language) parece SQL, mas tem uma restrição
+fundamental que o diferencia de qualquer banco relacional: `WHERE` só
+filtra eficientemente pela **partition key** (e clustering columns) — um
+`WHERE` numa coluna qualquer exige `ALLOW FILTERING`, que faz o cluster
+inteiro varrer todos os nós (anti-padrão, nunca gerado por este pacote).
+Não existe `JOIN`. Migrations no sentido do ORM relacional também não
+existem — schema é CQL aplicado manualmente. `core/nosql/cassandra` é
+honesto sobre essas restrições em vez de fingir que não existem.
+
+Mesmo padrão dos outros: **não é importado por `core/bootstrap`** — o
+driver oficial (`github.com/gocql/gocql`) só entra no binário se você
+mesmo importar `kyrux/core/nosql/cassandra`.
+
+### Usar
+
+```go
+import "kyrux/core/nosql/cassandra"
+
+c, err := cassandra.New([]string{"127.0.0.1"}, "meu_keyspace")
+defer c.Close()
+
+ctx := context.Background()
+
+// DDL/DML sem retorno de linhas
+err = c.Exec(ctx, `CREATE TABLE IF NOT EXISTS produtos (
+    id uuid PRIMARY KEY, nome text, preco double
+)`)
+err = c.Exec(ctx, "INSERT INTO produtos (id, nome, preco) VALUES (?, ?, ?)", id, "Caneca", 29.9)
+err = c.Exec(ctx, "DELETE FROM produtos WHERE id = ?", id)
+
+// Ler como map — sempre correto, sem conversão de tipos
+rows, err := c.SelectMap(ctx, "SELECT nome, preco FROM produtos WHERE id = ?", id)
+
+// Ler decodificado num struct (via tags `json:"..."`) — ergonômico para
+// tipos comuns (texto, número, booleano, timestamp); para uuid/list/set/map
+// nativos do Cassandra, prefira SelectMap ou Raw().Query(...).Scan direto.
+type Produto struct {
+    Nome  string  `json:"nome"`
+    Preco float64 `json:"preco"`
+}
+produtos, err := cassandra.Select[Produto](ctx, c, "SELECT nome, preco FROM produtos WHERE id = ?", id)
+```
+
+`WHERE` numa coluna que não é a partition key (sem índice, sem `ALLOW
+FILTERING`) é rejeitado pelo próprio Cassandra com erro — não é algo que
+este wrapper poderia (ou deveria) contornar.
+
+### Escape hatch
+
+`client.Raw()` devolve a `*gocql.Session` nativa do driver oficial — para
+batches, paginação manual (`PageState`), políticas de retry customizadas e
+qualquer coisa que este wrapper não cobre.
 
 ---
 

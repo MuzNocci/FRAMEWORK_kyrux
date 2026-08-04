@@ -102,6 +102,12 @@ conjunto ordenado e pub/sub de verdade. Também não é importado por
 `core/bootstrap` — mas se seu projeto já usa Cache/Queue com driver redis, o
 `go-redis` já está no binário, então usar este pacote não pesa a mais.
 
+### Cassandra
+Client dedicado (`core/nosql/cassandra`) — CQL só filtra eficientemente por
+partition key (sem JOIN, sem WHERE arbitrário sem `ALLOW FILTERING`), então
+`Exec`/`SelectMap`/`Select[T]` refletem essa restrição real em vez de
+fingir um SQL completo. Não importado por `core/bootstrap`.
+
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`
 (broadcast global) e variantes `*For` com escopo de sessão para conteúdo por usuário.
