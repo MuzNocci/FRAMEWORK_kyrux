@@ -2683,16 +2683,25 @@ publicando eventos de fase (`lifecycle.BeforeInit`, `AfterInit`,
 (a orquestração de verdade — ordem, propagação de erro — é síncrona dentro
 do próprio `core/lifecycle`, não pelo Bus).
 
-Provado com quatro adapters reais, todos com teste de ponta a ponta real
-(requisição HTTP, query GraphQL ou chamada gRPC de verdade — nenhum mock):
-um cache em memória (`core/adapters/cachememory`, hot-plug puro), uma
-conexão Postgres (`core/adapters/sqlpostgres`), uma API REST
-(`core/adapters/restapi`, reaproveitando o `core/router` do próprio Kyrux) e
-— fora do import de `kyrux/core`, ver seção "APIs pesadas" abaixo — GraphQL
-(`core/adapters/apigraphql`) e gRPC (`core/adapters/apigrpc`). Vários
-coexistem ao mesmo tempo no mesmo `Core` sem qualquer limitação de uso
-conjunto (ver `TestCoreCacheEPostgresCoexistindo` e
-`TestCoreAPIGRPCERESTCoexistindo`).
+Provado com **quinze adapters reais**, todos com teste de ponta a ponta
+real contra infraestrutura de verdade (Postgres, Kafka, RabbitMQ, NATS,
+MinIO, Mailpit, LocalStack, um OpenTelemetry Collector real — nunca mock
+do próprio código):
+
+| Categoria | Adapters | Sugar em `core.X` |
+|---|---|---|
+| Cache | `cachememory` | `core.Cache.Memory()` |
+| Banco SQL | `sqlpostgres` | `core.Database.SQL.Postgres()` |
+| API | `restapi`, `apigraphql`, `apigrpc`, `soapclient` (+ `core/soap` p/ servidor) | só REST e SOAPClient |
+| Fila | `kafka`, `rabbitmq`, `nats` | nenhum |
+| Storage | `s3` (S3 real ou MinIO, endpoint configurável) | nenhum |
+| Auth | `oauth2` | `core.Auth.OAuth2()` |
+| Mail | `smtp`, `sendgrid`, `ses` | só SMTP |
+| Observabilidade | `prometheus`, `opentelemetry` | nenhum |
+
+Vários coexistem ao mesmo tempo no mesmo `Core` sem qualquer limitação de
+uso conjunto (ver `TestCoreCacheEPostgresCoexistindo`,
+`TestCoreAPIGRPCERESTCoexistindo`, `TestCoreAPISOAPClienteEServidorReais`).
 
 ### Ativar módulos
 
@@ -2739,52 +2748,117 @@ func init() {
 valor, err := core.Use[*MeuTipo](c, "meu.modulo", "chave-no-container")
 ```
 
-### APIs pesadas (GraphQL, gRPC) — sem sugar em `core.API`
+### Adapters pesados — sem sugar em `core.X`, ative com `core.UseModule`
 
-`core.API.REST()` existe como método porque `core/router` já é dependência
-obrigatória do framework — importar de dentro de `kyrux/core` não pesa
-nada a mais. GraphQL (`github.com/graphql-go/graphql` + `handler`, que
-arrastam `html/template`/`compress/gzip`) e gRPC
-(`google.golang.org/grpc` + protobuf, HTTP/2 próprio) **não** têm esse
-privilégio — são dependências reais que a maioria dos projetos Kyrux nunca
-vai usar, então `kyrux/core` nunca as importa. Por isso não existe
-`core.API.GraphQL()`/`core.API.GRPC()`: importe o adapter você mesmo e
-ative com o `core.UseModule` genérico, exatamente como qualquer client
-NoSQL:
+`core.API.REST()`, `core.Database.SQL.Postgres()`, `core.Auth.OAuth2()`,
+`core.Mail.SMTP()` e `core.API.SOAPClient()` existem como métodos porque
+suas dependências já são obrigatórias do framework (`core/router`,
+`core/database`) ou puramente stdlib (`golang.org/x/oauth2`, `net/smtp`,
+`encoding/xml`) — importar de dentro de `kyrux/core` não pesa nada a mais.
+
+Todo o resto — GraphQL, gRPC, Kafka, RabbitMQ, NATS, S3, SendGrid, SES,
+Prometheus, OpenTelemetry — **não** tem esse privilégio: são dependências
+reais que a maioria dos projetos Kyrux nunca vai usar, então `kyrux/core`
+nunca as importa (confirmado via `go list -deps kyrux/core` no CI mental
+de cada um). Importe o adapter você mesmo e ative com o `core.UseModule`
+genérico, exatamente como qualquer client NoSQL:
 
 ```go
 import (
     "kyrux/core"
-    "kyrux/core/adapters/apigrpc"
-    "google.golang.org/grpc"
-
-    pb "seu/pacote/gerado/pelo/protoc"
+    "kyrux/core/adapters/kafka"
 )
 
-srv, err := core.UseModule[*grpc.Server](c, apigrpc.New("127.0.0.1:9090"), "api.grpc.principal")
-pb.RegisterSeuServiceServer(srv, &suaImplementacao{})
-// srv só passa a aceitar conexões em c.Run()
+client, err := core.UseModule[*kafka.Client](c, kafka.New("localhost:9092"), "queue.kafka.principal")
+w := client.Producer("pedidos")
+w.WriteMessages(ctx, kafkago.Message{Value: []byte("...")})
+r := client.Consumer("pedidos", "meu-grupo")
 ```
 
 ```go
 import (
     "kyrux/core"
-    "kyrux/core/adapters/apigraphql"
-    "github.com/graphql-go/graphql"
+    "kyrux/core/adapters/s3"
 )
 
-schema, _ := graphql.NewSchema(graphql.SchemaConfig{Query: seuQueryType})
-_, err := core.UseModule[*graphql.Schema](c, apigraphql.New("127.0.0.1:8082", schema), "api.graphql.principal")
-// serve em POST/GET no endereço dado, com GraphiQL habilitado (desative na sua própria camada se não quiser em produção)
+// endpoint vazio = AWS S3 real; endpoint não-vazio (ex: MinIO) exige accessKey/secretKey
+storage, err := core.UseModule[*s3.Client](c, s3adapter.New("principal", "us-east-1", "http://localhost:9000", "minioadmin", "minioadmin"), "storage.s3.principal")
+bucket := storage.Bucket("meu-bucket")
+err = bucket.Put(ctx, "foto.jpg", arquivo, "image/jpeg")
+```
+
+```go
+import (
+    "kyrux/core"
+    "kyrux/core/adapters/sendgrid"
+    "kyrux/core/mail"
+)
+
+client, err := core.UseModule[*sendgrid.Client](c, sendgrid.New("principal", "SG.xxx"), "mail.sendgrid.principal")
+err = client.Send(ctx, mail.Message{From: "...", To: []string{"..."}, Subject: "...", Text: "..."})
+// core/adapters/ses tem a mesma assinatura Send(ctx, mail.Message) — trocar de provedor
+// (SMTP/SendGrid/SES) não exige reescrever quem monta o e-mail (mail.Sender)
+```
+
+```go
+import (
+    "kyrux/core"
+    "kyrux/core/adapters/prometheus"
+)
+
+metrics, err := core.UseModule[*prometheus.Client](c, prometheusadapter.New("principal"), "observability.prometheus.principal")
+metrics.MustRegister(meuContador)
+api, _ := c.API.REST(addr)
+api.HandlePrefix("/metrics", metrics.Handler())
+```
+
+RabbitMQ (`core/adapters/rabbitmq`), NATS (`core/adapters/nats`), gRPC
+(`core/adapters/apigrpc`), GraphQL (`core/adapters/apigraphql`) e
+OpenTelemetry (`core/adapters/opentelemetry`) seguem o mesmo padrão —
+`New(...)` + `core.UseModule` — ver o comentário de pacote de cada um para
+os detalhes da assinatura.
+
+### SOAP — cliente e servidor sem nenhuma lib de terceiros
+
+Não existe uma biblioteca SOAP amplamente adotada e mantida em Go — como o
+protocolo em si é só XML bem definido sobre HTTP, `core/soap` implementa
+os dois lados direto sobre `encoding/xml`/`net/http` da stdlib (custo
+adicional zero). Uso típico: integração com webservices legados/governo
+(SEFAZ/NFe, INSS, etc.).
+
+Cliente, com sugar (`core.API.SOAPClient`, custo zero):
+
+```go
+client, err := c.API.SOAPClient("sefaz", "https://homologacao.sefaz.sp.gov.br/ws/...")
+var resp MinhaResposta
+err = client.Call(ctx, "ConsultarNFe", MinhaRequisicao{...}, &resp)
+// erro do servidor (<soap:Fault>) chega como *soap.Fault
+```
+
+Servidor — sem sugar dedicada; é um `http.Handler` comum, monte no router
+de `core.API.REST` do mesmo jeito que o `/metrics` do Prometheus:
+
+```go
+server := soap.NewServer()
+server.Handle("MinhaOperacaoRequest", func(ctx context.Context, requestXML []byte) ([]byte, error) {
+    var req MinhaOperacaoRequest
+    xml.Unmarshal(requestXML, &req)
+    return xml.Marshal(MinhaOperacaoResponse{...})
+})
+
+api, _ := c.API.REST(addr)
+api.HandlePrefix("/soap", server)
 ```
 
 ### O que ainda não existe (roadmap, não implementado)
 
-SOAP, filas externas (Kafka/RabbitMQ/NATS), storage (S3/MinIO), auth
-(OAuth2), mail (SMTP/SendGrid/SES), observabilidade
-(Prometheus/OpenTelemetry) e a reorganização completa de `core/` em
-namespaces (`core.Queue`, `core.Storage`, `core.Auth`, etc.) — tudo isso
-fica para fases seguintes, uma de cada vez.
+Ficam para fases seguintes: uma reorganização completa e opcional de
+`core/` (namespaces adicionais tipo `core.Queue.Kafka()` como sugar, se um
+dia fizer sentido relaxar a disciplina de peso pra conveniência), suporte
+a múltiplos exporters OpenTelemetry prontos (hoje só OTLP/HTTP — Jaeger
+nativo, Zipkin, etc. exigiriam adapters próprios), e qualquer protocolo
+novo que surgir (ex: MQTT, WebRTC) — cada um, quando vier, segue a mesma
+regra: só pesa no binário de quem importar.
 
 ---
 

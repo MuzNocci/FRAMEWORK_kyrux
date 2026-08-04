@@ -128,12 +128,17 @@ registrar e orquestrar módulos plugáveis: `Module` (Init/Configure/
 Start/Shutdown), Registry com hot-plug via `init()`, Container de DI nomeado
 (múltiplas instâncias do mesmo tipo coexistindo, ex: dois Postgres) e
 Lifecycle síncrono e ordenado, publicando eventos no `core/events.Bus`
-existente. Fase 1 de um plano maior — provado com quatro adapters reais e
-testados de ponta a ponta: cache em memória, Postgres, API REST
-(`core.API.REST`, reaproveita `core/router`) e — sem sugar em `core.API`,
-pra não pesar em quem não usa (importe e ative com `core.UseModule`) —
-GraphQL e gRPC. SOAP, filas externas, storage, auth e observabilidade ficam
-pra fases seguintes. Ver seção 28 do `USE.md`.
+existente. Provado com **15 adapters reais**, todos testados de ponta a
+ponta contra infraestrutura de verdade (nunca mock do próprio código):
+cache em memória, Postgres, API REST/GraphQL/gRPC/SOAP (cliente+servidor),
+Kafka/RabbitMQ/NATS, storage S3/MinIO, OAuth2, e-mail via
+SMTP/SendGrid/SES, métricas Prometheus e tracing OpenTelemetry. Sugar
+direto em `core.X` (`core.Cache.Memory()`, `core.Database.SQL.Postgres()`,
+`core.API.REST()`/`.SOAPClient()`, `core.Auth.OAuth2()`,
+`core.Mail.SMTP()`) só onde a dependência é grátis; o resto (GraphQL, gRPC,
+filas, S3, SendGrid, SES, Prometheus, OpenTelemetry) ativa via
+`core.UseModule` genérico, importando só quem realmente vai usar. Ver
+seção 28 do `USE.md`.
 
 ### Realtime
 WebSocket invisível — atualiza DOM sem JS manual via `fw.Realtime.Replace/Append/Prepend/Remove`

@@ -29,7 +29,7 @@ func (s *coreGreeterServer) SayHello(ctx context.Context, req *pb.HelloRequest) 
 }
 
 func TestCoreAPIGRPCERESTCoexistindo(t *testing.T) {
-	grpcAddr := envOr("KYRUX_TEST_GRPC_ADDR", "127.0.0.1:19092")
+	grpcAddr := envOr("KYRUX_TEST_GRPC_ADDR", "127.0.0.1:19192")
 	restAddr := envOr("KYRUX_TEST_REST_ADDR_GRPC_COEXIST", "127.0.0.1:18092")
 
 	c := core.New()

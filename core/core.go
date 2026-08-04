@@ -11,11 +11,14 @@
 // acontece com os drivers SQL (lib/pq, go-sql-driver/mysql) e os clients
 // NoSQL (core/nosql/*): "pague só pelo que você usa".
 //
-// Esta é a FUNDAÇÃO (fase 1 de um plano maior): Module, Registry, Container
-// (DI) e Lifecycle, provados com dois adapters reais (cache em memória e uma
-// conexão Postgres) — ver core/adapters/. GraphQL, gRPC, filas externas
-// (Kafka/RabbitMQ), storage (S3/MinIO), auth (OAuth2/JWT) e observabilidade
-// (Prometheus/OpenTelemetry) ficam para fases seguintes.
+// Esta é a FUNDAÇÃO: Module, Registry, Container (DI) e Lifecycle, provados
+// com 15 adapters reais (ver core/adapters/) — cache, Postgres, REST,
+// GraphQL, gRPC, SOAP, Kafka, RabbitMQ, NATS, S3/MinIO, OAuth2,
+// SMTP/SendGrid/SES, Prometheus e OpenTelemetry. Adapters cuja dependência
+// já é obrigatória do framework (ou pura stdlib) ganham sugar direto aqui
+// (core.Cache, core.Database, core.API.REST/.SOAPClient, core.Auth,
+// core.Mail.SMTP); o resto ativa via UseModule, importando só quem
+// realmente vai usar — ver USE.md seção 28 para o catálogo completo.
 package core
 
 import (
@@ -46,6 +49,8 @@ type Core struct {
 	Database DatabaseNamespace
 	Cache    CacheNamespace
 	API      APINamespace
+	Auth     AuthNamespace
+	Mail     MailNamespace
 }
 
 // New cria um Core vazio, pronto para ativar módulos.
@@ -59,6 +64,8 @@ func New() *Core {
 	c.Database = DatabaseNamespace{core: c, SQL: SQLNamespace{core: c}}
 	c.Cache = CacheNamespace{core: c}
 	c.API = APINamespace{core: c}
+	c.Auth = AuthNamespace{core: c}
+	c.Mail = MailNamespace{core: c}
 	return c
 }
 
