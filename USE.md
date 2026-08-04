@@ -2104,6 +2104,13 @@ meio). Se seu caso de uso precisa do total exato, troque para `Paginate` em
 > app não precisa (nem deve) chamá-las diretamente; a única API voltada para
 > o desenvolvedor é `admin.Register[T]` e suas opções.
 
+O render de cada página do admin (`core/admin/templates.go`) reaproveita o
+buffer de saída via `sync.Pool` entre requisições, em vez de alocar um
+`bytes.Buffer` novo a cada render — mesmo padrão já usado pelo motor de
+templates da aplicação (`core/render`). Medido (microbenchmark isolado,
+2026-08-04): ~26% menos memória alocada por render e ~7% menos tempo, sem
+nenhuma mudança de comportamento observável.
+
 ---
 
 ## 21. Fluxo do Sistema

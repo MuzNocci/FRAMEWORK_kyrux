@@ -9,6 +9,7 @@ import (
 	"kyrux/core/router"
 	"net/http"
 	"strconv"
+	"sync"
 )
 
 //go:embed layout.html login.html dashboard.html list.html form.html
@@ -35,9 +36,17 @@ var (
 	formTpl      = mustPage("form.html")
 )
 
+// bufPool evita, a cada render, começar de um bytes.Buffer com capacidade
+// zero e pagar o custo de bytes.growSlice até o tamanho real da página —
+// mesmo padrão já usado em core/render/render.go.
+var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
 func renderPage(w http.ResponseWriter, tpl *template.Template, data any) {
-	var buf bytes.Buffer
-	if err := tpl.ExecuteTemplate(&buf, "layout", data); err != nil {
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+
+	if err := tpl.ExecuteTemplate(buf, "layout", data); err != nil {
 		http.Error(w, "admin: erro ao renderizar: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
