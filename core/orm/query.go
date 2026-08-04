@@ -263,24 +263,15 @@ func (q *Query[T]) Offset(n int) *Query[T] {
 // ── execução ──────────────────────────────────────────────────────────────────
 
 // queryRows executa via cache de statements quando disponível (conexão),
-// ou direto (transação).
+// ou direto (transação). Ver execCached/queryRowCached/queryCached em
+// exec.go — mesma lógica, compartilhada com as escritas.
 func (q *Query[T]) queryRows(sqlStr string, args []any) (*sql.Rows, error) {
-	if p, ok := q.exec.(stmtPreparer); ok {
-		if stmt, err := p.PrepareCached(sqlStr); err == nil {
-			return stmt.Query(args...)
-		}
-	}
-	return q.exec.Query(sqlStr, args...)
+	return queryCached(q.exec, sqlStr, args)
 }
 
 // scanRow executa a query e escaneia a única linha esperada em dest.
 func (q *Query[T]) scanRow(sqlStr string, args []any, dest ...any) error {
-	if p, ok := q.exec.(stmtPreparer); ok {
-		if stmt, err := p.PrepareCached(sqlStr); err == nil {
-			return stmt.QueryRow(args...).Scan(dest...)
-		}
-	}
-	return q.exec.QueryRow(sqlStr, args...).Scan(dest...)
+	return queryRowCached(q.exec, sqlStr, args).Scan(dest...)
 }
 
 // All executa a query e retorna todas as linhas encontradas.
@@ -505,7 +496,7 @@ func (q *Query[T]) Update(values map[string]any) error {
 	sb.WriteString(" SET ")
 	sb.WriteString(strings.Join(setClauses, ", "))
 	q.writeWhere(&sb)
-	if _, err := q.exec.Exec(rewritePlaceholders(q.driver, sb.String()), args...); err != nil {
+	if _, err := execCached(q.exec, rewritePlaceholders(q.driver, sb.String()), args); err != nil {
 		return fmt.Errorf("orm: update: %w", err)
 	}
 	return nil
@@ -527,7 +518,7 @@ func (q *Query[T]) Delete() error {
 	sb.WriteString("DELETE FROM ")
 	sb.WriteString(qualifiedTable(q.schema, q.meta.Table))
 	q.writeWhere(&sb)
-	if _, err := q.exec.Exec(rewritePlaceholders(q.driver, sb.String()), q.args...); err != nil {
+	if _, err := execCached(q.exec, rewritePlaceholders(q.driver, sb.String()), q.args); err != nil {
 		return fmt.Errorf("orm: delete: %w", err)
 	}
 	return nil

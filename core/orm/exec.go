@@ -1,10 +1,12 @@
 package orm
 
 import (
+	"database/sql"
 	"fmt"
 	"kyrux/core/database"
 	"kyrux/core/security/crypton"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -106,7 +108,7 @@ func createInto(exec sqlExec, driver, schema string, model any) error {
 	// PostgreSQL: RETURNING evita um round-trip extra para buscar o PK.
 	if isPG(driver) && meta.PKField != nil {
 		sqlStr += " RETURNING " + meta.PKField.Column
-		row := exec.QueryRow(rewritePlaceholders(driver, sqlStr), args...)
+		row := queryRowCached(exec, rewritePlaceholders(driver, sqlStr), args)
 		pkVal := v.Field(meta.PKField.GoIndex)
 		if pkVal.CanAddr() {
 			if err := row.Scan(pkVal.Addr().Interface()); err != nil {
@@ -118,7 +120,7 @@ func createInto(exec sqlExec, driver, schema string, model any) error {
 		return row.Scan(&discard)
 	}
 
-	result, err := exec.Exec(rewritePlaceholders(driver, sqlStr), args...)
+	result, err := execCached(exec, rewritePlaceholders(driver, sqlStr), args)
 	if err != nil {
 		return fmt.Errorf("orm: create: %w", err)
 	}
@@ -191,7 +193,7 @@ func insertChunk[T any](exec sqlExec, driver string, meta *ModelMeta, table stri
 	sqlStr := sb.String()
 	if isPG(driver) && meta.PKField != nil {
 		sqlStr += " RETURNING " + meta.PKField.Column
-		rows, err := exec.Query(rewritePlaceholders(driver, sqlStr), args...)
+		rows, err := queryCached(exec, rewritePlaceholders(driver, sqlStr), args)
 		if err != nil {
 			return fmt.Errorf("orm: createall: %w", err)
 		}
@@ -213,10 +215,44 @@ func insertChunk[T any](exec sqlExec, driver string, meta *ModelMeta, table stri
 		return nil
 	}
 
-	if _, err := exec.Exec(rewritePlaceholders(driver, sqlStr), args...); err != nil {
+	if _, err := execCached(exec, rewritePlaceholders(driver, sqlStr), args); err != nil {
 		return fmt.Errorf("orm: createall: %w", err)
 	}
 	return nil
+}
+
+// execCached, queryRowCached e queryCached são as versões de escrita de
+// queryRows/scanRow (ver query.go): reaproveitam o cache de prepared
+// statements da conexão (PrepareCached) quando disponível — o mesmo
+// benefício que as leituras já tinham, agora também em
+// Create/CreateAll/Update/Delete. Sobre uma transação (*database.Tx, que
+// não implementa stmtPreparer), cai para o Exec/Query/QueryRow direto —
+// idêntico ao comportamento anterior.
+func execCached(exec sqlExec, sqlStr string, args []any) (sql.Result, error) {
+	if p, ok := exec.(stmtPreparer); ok {
+		if stmt, err := p.PrepareCached(sqlStr); err == nil {
+			return stmt.Exec(args...)
+		}
+	}
+	return exec.Exec(sqlStr, args...)
+}
+
+func queryRowCached(exec sqlExec, sqlStr string, args []any) *sql.Row {
+	if p, ok := exec.(stmtPreparer); ok {
+		if stmt, err := p.PrepareCached(sqlStr); err == nil {
+			return stmt.QueryRow(args...)
+		}
+	}
+	return exec.QueryRow(sqlStr, args...)
+}
+
+func queryCached(exec sqlExec, sqlStr string, args []any) (*sql.Rows, error) {
+	if p, ok := exec.(stmtPreparer); ok {
+		if stmt, err := p.PrepareCached(sqlStr); err == nil {
+			return stmt.Query(args...)
+		}
+	}
+	return exec.Query(sqlStr, args...)
 }
 
 // qualifiedTable prefixa o nome da tabela com o schema, se definido.
@@ -234,6 +270,10 @@ func isPG(driver string) bool {
 
 // rewritePlaceholders converte ? para $N (PostgreSQL).
 // Para outros drivers devolve a query sem alterações.
+//
+// Roda em toda query (leitura e escrita, sem cache) — por isso evita
+// fmt.Fprintf (que carrega parsing de format string e boxing via
+// reflection a cada chamada) em favor de strconv.Itoa direto.
 func rewritePlaceholders(driver, query string) string {
 	if !isPG(driver) {
 		return query
@@ -243,7 +283,8 @@ func rewritePlaceholders(driver, query string) string {
 	n := 1
 	for _, c := range query {
 		if c == '?' {
-			fmt.Fprintf(&b, "$%d", n)
+			b.WriteByte('$')
+			b.WriteString(strconv.Itoa(n))
 			n++
 		} else {
 			b.WriteRune(c)
