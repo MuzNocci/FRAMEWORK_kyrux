@@ -2310,10 +2310,21 @@ O servidor de benchmark (`/tmp/kyrux_bench_server.go`) usa `runtime.GOMAXPROCS(4
 | Layer 1 — registro | sub-µs por rota | Custo da primitiva, sem request |
 | Layer 2 — framework (`-bench`) | ~433k–592k | Router + handler, sem syscall de rede |
 | Layer 2 — regressão | ~620k–1.2M | Mesmo código, contexto mais aquecido |
-| Layer 3 — Go client | ~15k–18k | Throughput real com overhead de `net/http` |
+| Layer 3 — Go client (`TestThroughputReal`) | ~2k (rota com banco) a ~60k (rota sem banco) | Throughput real com overhead de `net/http`, autenticação de sessão e ORM nas rotas que usam banco |
 | Layer 3 — `ab` | ~120k–220k | Capacidade máxima com cliente C otimizado |
 
 Não comparar números entre camadas — cada uma mede uma coisa diferente.
+
+> **2026-08-04:** o cliente de `TestThroughputReal` fechava o body da
+> resposta sem drenar o conteúdo antes — isso impede o `net/http` de
+> reaproveitar a conexão via keep-alive, forçando uma conexão TCP nova a
+> cada requisição (competindo por CPU com o próprio servidor, já que
+> cliente e servidor rodam no mesmo processo/`GOMAXPROCS`). Corrigido com
+> `io.Copy(io.Discard, resp.Body)` antes do `Close()`. O intervalo acima já
+> reflete o cliente corrigido — antes da correção, as rotas sem gargalo de
+> banco chegavam a medir de 2x a 4x mais lento do que o framework
+> realmente entrega (o handler nunca foi o gargalo; o cliente de teste é
+> que media errado).
 
 ---
 

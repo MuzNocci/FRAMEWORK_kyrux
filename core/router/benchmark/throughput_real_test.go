@@ -223,6 +223,7 @@ func loginAsAdmin(t *testing.T, base string, client *http.Client) *http.Client {
 		t.Logf("loginAsAdmin: POST /admin/login/: %v", err)
 		return nil
 	}
+	io.Copy(io.Discard, resp2.Body) //nolint:errcheck
 	resp2.Body.Close()
 
 	// PostForm segue o redirect de sucesso (POST-redirect-GET) — se o
@@ -405,6 +406,7 @@ func TestThroughputReal(t *testing.T) {
 		for i := 0; i < workers*5; i++ {
 			resp, err := c.Get(base + sc.url)
 			if err == nil {
+				io.Copy(io.Discard, resp.Body) //nolint:errcheck
 				resp.Body.Close()
 			}
 		}
@@ -439,6 +441,7 @@ func TestThroughputReal(t *testing.T) {
 						errs.Add(1)
 						continue
 					}
+					io.Copy(io.Discard, resp.Body) //nolint:errcheck
 					resp.Body.Close()
 					if resp.StatusCode == http.StatusOK {
 						total.Add(1)
