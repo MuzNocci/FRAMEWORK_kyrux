@@ -58,6 +58,7 @@ import (
 	"kyrux/core/database"
 	"kyrux/core/orm"
 	"kyrux/core/render"
+	"kyrux/core/router"
 	"kyrux/core/security/auth"
 
 	_ "github.com/lib/pq"
@@ -263,6 +264,14 @@ func TestThroughputReal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bootstrap.Init: %v", err)
 	}
+
+	// Baseline sem banco — nada em apps/ registra rota nenhuma por padrão
+	// (apps/ é gitignored no próprio framework), então sem isso a suíte só
+	// mediria rotas de banco/HTML, sem nada pra comparar o custo puro do
+	// router+JSON.
+	fw.Router.Handle("GET /ping/", func(ctx *router.Context) {
+		ctx.JSON(http.StatusOK, map[string]string{"pong": "true"})
+	})
 
 	// Popula o model de benchmark — sem isso, /admin/throughput-bench/ e
 	// /admin/throughput-bench/<pk>/ existiriam nas rotas mas seriam listas
