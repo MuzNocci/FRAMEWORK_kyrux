@@ -17,6 +17,10 @@
 !/core/air/apps/.gitkeep
 /apps/*
 !/apps/.gitkeep
+# meta é o único app que o framework em si traz pronto (robots.txt/
+# sitemap.xml/security.txt) — todo o resto de /apps é específico de cada
+# projeto clonado a partir deste template, por isso continua ignorado.
+!/apps/meta
 *.exe
 *.exe~
 *.dll

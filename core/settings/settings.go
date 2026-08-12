@@ -25,6 +25,14 @@ type AppSettings struct {
 	Version string
 	Debug   bool
 	Env     string
+
+	// URL é a origem canônica do site (ex: "https://meusite.com.br", sem
+	// barra final) — usada pelo app embutido "meta" (apps/meta) pra montar
+	// URLs absolutas em robots.txt, sitemap.xml e security.txt. Vazia até
+	// configurar APP_URL no .env; nesse caso esses arquivos saem sem
+	// domínio (Sitemap/Canonical omitidos), o que ainda é válido mas
+	// incompleto — configure antes de ir pra produção.
+	URL string
 }
 
 type ServerSettings struct {
@@ -144,6 +152,7 @@ func Load() *Settings {
 			Version: "0.4.5 (Beta)",
 			Env:     env,
 			Debug:   env == "development",
+			URL:     strings.TrimSuffix(environment.Get("APP_URL"), "/"),
 		},
 		Server: ServerSettings{
 			Host:    environment.GetOr("SERVER_HOST", "127.0.0.1"),
