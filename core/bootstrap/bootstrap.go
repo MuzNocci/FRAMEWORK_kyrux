@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	smtpadapter "kyrux/core/adapters/smtp"
 	"kyrux/core/admin"
 	"kyrux/core/bootstrap/assets"
 	kydebug "kyrux/core/bootstrap/debug"
@@ -13,6 +14,7 @@ import (
 	kyerrors "kyrux/core/errors"
 	"kyrux/core/events"
 	"kyrux/core/hotreload"
+	"kyrux/core/mail"
 	"kyrux/core/orm"
 	"kyrux/core/queue"
 	"kyrux/core/realtime"
@@ -44,6 +46,16 @@ type Framework struct {
 	DB       *database.Manager
 	Cache    *cache.Cache
 	Queue    *queue.Queue
+
+	// Mail é nil se MAIL_ENABLED=false, ou se MAIL_HOST/MAIL_USER estiverem
+	// vazios, ou se o servidor SMTP estiver inacessível no boot — ao
+	// contrário de Cache/Queue (que sempre caem para um fallback em
+	// memória), não existe um "envio de e-mail" que funcione sem servidor
+	// de verdade. Cheque por nil antes de usar. Quando não-nil, Send
+	// enfileira em Queue (assíncrono, não bloqueia o caller) se Queue
+	// também estiver configurado — senão envia síncrono. Ver core/mail.Queued.
+	Mail mail.Sender
+
 	Auth     *auth.Authenticator
 	Sessions *session.Store
 }
@@ -64,6 +76,7 @@ func Init(envPath string) (*Framework, error) {
 	csrf.SetSecret(cfg.Security.SecretKey)
 	session.SetSecureDefault(!cfg.App.Debug)
 	secmiddleware.SetTrustedProxyHeader(cfg.Security.TrustedProxy)
+	secmiddleware.SetCSP(cfg.Security.CSPPolicy) // vazio (CSP_POLICY não definida) mantém secmiddleware.DefaultCSP
 
 	if !cfg.App.Debug {
 		if cfg.Security.SecretKey == "change-me" {
@@ -190,6 +203,26 @@ func Init(envPath string) (*Framework, error) {
 		}
 	} else {
 		log.Println("bootstrap: queue disabled (QUEUE_ENABLED=false)")
+	}
+
+	if cfg.Mail.Enabled {
+		if cfg.Mail.Host == "" || cfg.Mail.User == "" {
+			log.Println("bootstrap: MAIL_ENABLED=true mas MAIL_HOST/MAIL_USER não configurados no .env — fw.Mail ficará indisponível")
+		} else {
+			useTLS := cfg.Mail.Port != "465" // 465 já usa TLS implícito, ignora essa flag
+			adapter := smtpadapter.New("default", cfg.Mail.Host, cfg.Mail.Port, cfg.Mail.User, cfg.Mail.Password, useTLS)
+			mailCtx := context.Background()
+			if err := adapter.Init(mailCtx); err != nil {
+				log.Printf("bootstrap: mail: %v — fw.Mail ficará indisponível\n", err)
+			} else if err := adapter.Configure(mailCtx); err != nil {
+				log.Printf("bootstrap: MAIL_HOST/MAIL_PORT inacessível (%s:%s): %v — fw.Mail ficará indisponível\n", cfg.Mail.Host, cfg.Mail.Port, err)
+			} else {
+				f.Mail = mail.NewQueued(adapter.Value(), f.Queue)
+				log.Printf("bootstrap: mail enabled (smtp @ %s:%s, assíncrono via fila: %v)\n", cfg.Mail.Host, cfg.Mail.Port, f.Queue != nil)
+			}
+		}
+	} else {
+		log.Println("bootstrap: mail disabled (MAIL_ENABLED=false)")
 	}
 
 	for _, appName := range cfg.InstalledApps {

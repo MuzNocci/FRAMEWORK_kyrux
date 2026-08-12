@@ -67,3 +67,107 @@ func TestAllowedHostsIPv6(t *testing.T) {
 		}
 	}
 }
+
+func TestSecureHeadersUsaDefaultCSPSemSetCSP(t *testing.T) {
+	t.Cleanup(func() { SetCSP(DefaultCSP) })
+	SetCSP(DefaultCSP) // garante estado limpo mesmo se outro teste rodou antes
+
+	handler := SecureHeaders(func(ctx *router.Context) {
+		ctx.Writer.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	handler(&router.Context{Writer: rec, Request: req})
+
+	if got := rec.Header().Get("Content-Security-Policy"); got != DefaultCSP {
+		t.Fatalf("CSP = %q, esperava o default %q", got, DefaultCSP)
+	}
+	// Confirma que os outros cabeçalhos de segurança continuam saindo —
+	// a mudança pra CSP configurável não pode ter derrubado os fixos.
+	if rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatal("X-Frame-Options ausente depois da refatoração de SecureHeaders")
+	}
+}
+
+func TestSetCSPTrocaAPolicyGlobal(t *testing.T) {
+	t.Cleanup(func() { SetCSP(DefaultCSP) })
+
+	custom := "default-src 'self'; script-src 'self' https://exemplo.com"
+	SetCSP(custom)
+
+	if got := CSP(); got != custom {
+		t.Fatalf("CSP() = %q, esperava %q", got, custom)
+	}
+
+	handler := SecureHeaders(func(ctx *router.Context) {
+		ctx.Writer.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	handler(&router.Context{Writer: rec, Request: req})
+
+	if got := rec.Header().Get("Content-Security-Policy"); got != custom {
+		t.Fatalf("Content-Security-Policy = %q, esperava %q", got, custom)
+	}
+}
+
+func TestSetCSPComPolicyVaziaNaoAlteraOValorAtual(t *testing.T) {
+	t.Cleanup(func() { SetCSP(DefaultCSP) })
+
+	custom := "default-src 'none'"
+	SetCSP(custom)
+	SetCSP("") // não deve apagar o que já estava configurado
+
+	if got := CSP(); got != custom {
+		t.Fatalf("CSP() = %q depois de SetCSP(\"\"), esperava manter %q", got, custom)
+	}
+}
+
+func TestCSPOverrideSubstituiOHeaderDoSecureHeaders(t *testing.T) {
+	t.Cleanup(func() { SetCSP(DefaultCSP) })
+	SetCSP(DefaultCSP)
+
+	routePolicy := "default-src 'self'; frame-src https://www.google.com/maps/"
+
+	// Cadeia real: SecureHeaders (global) por fora, CSPOverride (por rota)
+	// por dentro — mesma ordem de execução que router.Router.chain produz
+	// (global primeiro, depois o handler já embrulhado pela rota).
+	handler := SecureHeaders(CSPOverride(routePolicy)(func(ctx *router.Context) {
+		ctx.Writer.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/contato/", nil)
+	rec := httptest.NewRecorder()
+	handler(&router.Context{Writer: rec, Request: req})
+
+	if got := rec.Header().Get("Content-Security-Policy"); got != routePolicy {
+		t.Fatalf("Content-Security-Policy = %q, esperava o override da rota %q", got, routePolicy)
+	}
+}
+
+func TestCSPOverrideNaoAfetaOutrasRotas(t *testing.T) {
+	t.Cleanup(func() { SetCSP(DefaultCSP) })
+	SetCSP(DefaultCSP)
+
+	routePolicy := "default-src 'self'; frame-src https://www.google.com/maps/"
+	overridden := SecureHeaders(CSPOverride(routePolicy)(func(ctx *router.Context) {
+		ctx.Writer.WriteHeader(http.StatusOK)
+	}))
+	plain := SecureHeaders(func(ctx *router.Context) {
+		ctx.Writer.WriteHeader(http.StatusOK)
+	})
+
+	recOverridden := httptest.NewRecorder()
+	overridden(&router.Context{Writer: recOverridden, Request: httptest.NewRequest("GET", "/contato/", nil)})
+
+	recPlain := httptest.NewRecorder()
+	plain(&router.Context{Writer: recPlain, Request: httptest.NewRequest("GET", "/", nil)})
+
+	if got := recOverridden.Header().Get("Content-Security-Policy"); got != routePolicy {
+		t.Fatalf("rota com override: CSP = %q, esperava %q", got, routePolicy)
+	}
+	if got := recPlain.Header().Get("Content-Security-Policy"); got != DefaultCSP {
+		t.Fatalf("rota sem override: CSP = %q, esperava o default %q — override vazou pra outra rota", got, DefaultCSP)
+	}
+}

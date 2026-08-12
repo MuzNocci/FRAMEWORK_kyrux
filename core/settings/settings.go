@@ -15,6 +15,7 @@ type Settings struct {
 	Databases     []DatabaseSettings // todos os bancos configurados
 	Cache         CacheSettings
 	Queue         QueueSettings
+	Mail          MailSettings
 	Admin         AdminSettings
 	Security      SecuritySettings
 }
@@ -54,6 +55,14 @@ type QueueSettings struct {
 	Workers  int
 }
 
+type MailSettings struct {
+	Enabled  bool
+	Host     string
+	Port     string // padrão "587" (STARTTLS); "465" usa TLS implícito automaticamente
+	User     string
+	Password string
+}
+
 type AdminSettings struct {
 	Enabled bool
 	Path    string // ex: "/admin/" — sempre com barra final
@@ -73,6 +82,7 @@ type SecuritySettings struct {
 	Pepper        string
 	EncryptionKey string
 	TrustedProxy  string // header de IP real do cliente (ex: X-Forwarded-For); vazio = sem proxy
+	CSPPolicy     string // Content-Security-Policy padrão; vazio = usa secmiddleware.DefaultCSP
 }
 
 // InstalledApps é preenchido pelo core/apps/installed.go do projeto via init().
@@ -154,6 +164,13 @@ func Load() *Settings {
 			Password: environment.Get("QUEUE_PASSWORD"),
 			Workers:  intOr(environment.Get("QUEUE_WORKERS"), 4),
 		},
+		Mail: MailSettings{
+			Enabled:  environment.GetOr("MAIL_ENABLED", "false") == "true",
+			Host:     environment.Get("MAIL_HOST"),
+			Port:     environment.GetOr("MAIL_PORT", "587"),
+			User:     environment.Get("MAIL_USER"),
+			Password: environment.Get("MAIL_PASSWORD"),
+		},
 		Admin: AdminSettings{
 			Enabled:           environment.GetOr("ADMIN_ENABLED", "false") == "true",
 			Path:              environment.GetOr("ADMIN_PATH", "/admin/"),
@@ -167,6 +184,7 @@ func Load() *Settings {
 			Pepper:        environment.Get("PASSWORD_PEPPER"),
 			EncryptionKey: environment.Get("FIELD_ENCRYPTION_KEY"),
 			TrustedProxy:  environment.Get("TRUSTED_PROXY_HEADER"),
+			CSPPolicy:     environment.Get("CSP_POLICY"),
 		},
 	}
 

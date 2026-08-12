@@ -34,6 +34,9 @@ Criado por Müller Nocciolli · [framework.kyrux.com.br/docs](https://framework.
 25. [Cassandra (NoSQL)](#25-cassandra-nosql)
 26. [Elasticsearch (NoSQL)](#26-elasticsearch-nosql)
 27. [DynamoDB (NoSQL)](#27-dynamodb-nosql)
+28. [Core (fundação modular) — experimental](#28-core-fundação-modular--experimental)
+29. [Mail (fw.Mail)](#29-mail-fwmail)
+30. [Captcha (core/security/captcha)](#30-captcha-coresecuritycaptcha)
 
 ---
 
@@ -151,6 +154,15 @@ ADMIN_PATH=/admin/
 # ADMIN_SUPERUSER_USERNAME=admin
 # ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 
+# ── Mail (fw.Mail — ver seção 29) ──────────────────────────────────
+MAIL_ENABLED=false
+MAIL_HOST=smtp.exemplo.com.br
+MAIL_PORT=587           # 465 usa TLS implícito (SMTPS) automaticamente; qualquer outra porta usa STARTTLS
+MAIL_USER=no-reply@exemplo.com.br
+MAIL_PASSWORD=troque-esta-senha
+# Com QUEUE_ENABLED=true, fw.Mail.Send() enfileira e devolve na hora —
+# não bloqueia o caller esperando a sessão SMTP (ver core/mail.Queued).
+
 # ── Segurança ─────────────────────────────────────────────────────
 SECRET_KEY=sua-chave-secreta-forte-aqui
 SESSION_TTL=3600        # duração da sessão em segundos
@@ -162,6 +174,11 @@ PASSWORD_PEPPER=seu-pepper-forte-aqui
 # Chave AES-256-GCM para campos kyrux:"encrypt" — nunca armazenar no banco
 # Gere com: openssl rand -base64 32
 FIELD_ENCRYPTION_KEY=sua-chave-de-criptografia-forte-aqui
+
+# Content-Security-Policy padrão (opcional) — vazia usa o DefaultCSP
+# embutido (ver seção 9). Sobrescreve só a política global; exceções por
+# rota continuam via secmiddleware.CSPOverride no código.
+# CSP_POLICY=default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:
 
 # ── Runtime (opcional) ────────────────────────────────────────────
 # Percentual de GC do Go. Padrão: 100. Reduzir (ex: 75) diminui heap, aumenta frequência de GC.
@@ -679,7 +696,7 @@ Registrados no `bootstrap` — já ativos por padrão:
 |---------------------|---------------------------------------------------------------|
 | `Recovery()`        | Captura panics — mostra debug page (dev) ou 500 (prod)        |
 | `MaxBodySize(32MB)` | Limita o tamanho do body — defesa contra payloads gigantes    |
-| `SecureHeaders`     | HSTS, X-Frame-Options, CSP — **apenas em production** (`APP_ENV=development` não ativa) |
+| `SecureHeaders`     | HSTS, X-Frame-Options, CSP (configurável — ver abaixo) — **apenas em production** (`APP_ENV=development` não ativa) |
 | `AllowedHosts()`    | Bloqueia hosts não autorizados (ignorado em dev)              |
 | `csrf.Middleware`   | Valida token CSRF em métodos não seguros                      |
 
@@ -750,6 +767,37 @@ func Register(r *router.Router) {
     }))
 }
 ```
+
+### Content-Security-Policy (CSP) configurável
+
+A CSP enviada por `SecureHeaders` em produção tem um padrão estrito
+(`secmiddleware.DefaultCSP`: `default-src 'self'; script-src 'self';
+style-src 'self' 'unsafe-inline'; img-src 'self' data:`) — configurável em
+dois níveis, sem precisar editar `core/`:
+
+**Global** — troca a política do site inteiro, normalmente a partir de
+`CSP_POLICY` no `.env` (o bootstrap já chama isso sozinho):
+
+```go
+secmiddleware.SetCSP(cfg.Security.CSPPolicy) // policy vazia mantém o DefaultCSP
+```
+
+**Por rota** — sobrescreve só numa página que precisa de uma exceção
+pontual (um script/iframe de terceiro só ali — ex: um mapa incorporado ou
+um provedor de captcha), sem afrouxar a política padrão do resto do site:
+
+```go
+mapaCSP := "default-src 'self'; frame-src https://www.google.com/maps/"
+
+router.Path("GET", "/contato/",
+    secmiddleware.CSPOverride(mapaCSP)(views.ContatoView(fw)), "contato"),
+```
+
+Funciona porque middleware por rota roda depois do global (`SecureHeaders`
+inclusive) na cadeia — o `Set` do `CSPOverride` substitui, nunca soma, o
+header que `SecureHeaders` já escreveu. Também funciona sem
+`SecureHeaders` ativo (development): só adiciona um header a mais,
+inofensivo.
 
 ---
 
@@ -2725,18 +2773,27 @@ do próprio código):
 | Fila | `kafka`, `rabbitmq`, `nats` | nenhum |
 | Storage | `s3` (S3 real ou MinIO, endpoint configurável) | nenhum |
 | Auth | `oauth2` | `core.Auth.OAuth2()` |
-| Mail | `smtp`, `sendgrid`, `ses` | só SMTP |
+| Mail | `smtp` (STARTTLS ou SMTPS/465, automático pela porta), `sendgrid`, `ses` | só SMTP |
 | Observabilidade | `prometheus`, `opentelemetry` | nenhum |
 
 Vários coexistem ao mesmo tempo no mesmo `Core` sem qualquer limitação de
 uso conjunto (ver `TestCoreCacheEPostgresCoexistindo`,
 `TestCoreAPIGRPCERESTCoexistindo`, `TestCoreAPISOAPClienteEServidorReais`).
 
+O caminho STARTTLS do adapter `smtp` é testado via `core.Mail.SMTP` contra
+um Mailpit real (`core_mail_smtp_test.go`); o caminho SMTPS/TLS implícito
+(porta 465) é testado em `core/adapters/smtp/smtp_test.go` contra um
+servidor TLS/SMTP real em loopback (handshake TLS e protocolo SMTP de
+verdade — não é Mailpit, que não expõe SMTPS, mas também não é mock do
+próprio código: é um peer real na outra ponta do socket).
+
 ### Ativar módulos
 
 ```go
 import (
+    "context"
     "kyrux/core"
+    "kyrux/core/mail"
     _ "kyrux/core/adapters/cachememory" // hot-plug: só entra no binário se importado
     _ "github.com/lib/pq"               // driver Postgres — o Core nunca importa drivers
 )
@@ -2745,6 +2802,11 @@ c := core.New()
 
 cache, err := c.Cache.Memory()
 db, err := c.Database.SQL.Postgres("principal", "postgres://user:pass@localhost/app?sslmode=disable")
+
+// useTLS ativa STARTTLS fora da porta 465 (ex: 587). Na porta 465, o
+// client já usa TLS implícito (SMTPS) sozinho — a flag é ignorada.
+mailer, err := c.Mail.SMTP("principal", "smtp.exemplo.com.br", "465", "user@exemplo.com.br", "senha", false)
+err = mailer.Send(context.Background(), mail.Message{From: "user@exemplo.com.br", To: []string{"destino@exemplo.com.br"}, Subject: "Olá", Text: "corpo"})
 
 // core.API.REST reaproveita o core/router — devolve o Router pra registrar rotas
 api, err := c.API.REST("127.0.0.1:8081")
@@ -2888,6 +2950,130 @@ a múltiplos exporters OpenTelemetry prontos (hoje só OTLP/HTTP — Jaeger
 nativo, Zipkin, etc. exigiriam adapters próprios), e qualquer protocolo
 novo que surgir (ex: MQTT, WebRTC) — cada um, quando vier, segue a mesma
 regra: só pesa no binário de quem importar.
+
+---
+
+## 29. Mail (fw.Mail)
+
+Serviço de e-mail de primeira classe, igual `fw.DB`/`fw.Cache`/`fw.Queue`
+— conectado automaticamente no boot a partir de `MAIL_*` no `.env` (ver
+seção 3), disponível em qualquer app sem nenhuma configuração extra.
+
+### Ativar
+
+```env
+MAIL_ENABLED=true
+MAIL_HOST=smtp.exemplo.com.br
+MAIL_PORT=465            # 465 = TLS implícito (SMTPS) automático; outra porta = STARTTLS
+MAIL_USER=no-reply@exemplo.com.br
+MAIL_PASSWORD=sua-senha
+```
+
+`fw.Mail` fica `nil` se `MAIL_ENABLED=false`, se `MAIL_HOST`/`MAIL_USER`
+estiverem vazios, ou se o servidor SMTP estiver inacessível no boot — ao
+contrário de Cache/Queue (que sempre caem para um fallback em memória),
+não existe "envio de e-mail" que funcione sem servidor de verdade. Sempre
+cheque `fw.Mail != nil` antes de usar.
+
+### Enviar
+
+```go
+import "kyrux/core/mail"
+
+err := fw.Mail.Send(ctx.Request.Context(), mail.Message{
+    From:    "contato@meuapp.com",
+    ReplyTo: "visitante@example.com", // opcional
+    To:      []string{"destino@example.com"},
+    Cc:      []string{"copia@example.com"},  // opcional
+    Bcc:     []string{"oculta@example.com"}, // opcional
+    Subject: "Assunto",
+    Text:    "Corpo em texto puro",
+    HTML:    "<p>Corpo em HTML</p>", // opcional — se vazio, envia só Text
+    Attachments: []mail.Attachment{
+        {Filename: "nota.pdf", Content: pdfBytes, ContentType: "application/pdf"},
+    },
+})
+```
+
+### Assíncrono via Queue
+
+Se `QUEUE_ENABLED=true`, `fw.Mail.Send()` **enfileira** a mensagem em
+`fw.Queue` e devolve o controle quase na hora — a entrega de verdade
+acontece depois, num worker (pool, retry com backoff automático em falha
+transitória, drenagem no shutdown). Sem isso, a requisição HTTP ficaria
+presa esperando a ida e volta de uma sessão SMTP, que pode levar segundos.
+
+Sem `QUEUE_ENABLED=true`, `Send` é síncrono — o erro devolvido já é o de
+entrega de verdade. Com fila, o erro devolvido por `Send` é só de
+**enfileirar** (fila cheia, fila encerrada); falhas de entrega acontecem
+assíncronas e só aparecem nos logs e no retry automático da fila, nunca de
+volta pro caller.
+
+Implementado em `core/mail.Queued` (`core/mail/queued.go`) — reaproveita
+`core/queue` sem nenhuma dependência nova; funciona também com
+`QUEUE_DRIVER=redis` (payload serializado em JSON entre réplicas).
+
+### Trocar de provedor
+
+`fw.Mail` é montado sobre `core/adapters/smtp` no bootstrap. Pra
+SendGrid/SES (sem sugar automático — SDK de terceiros), monte você mesmo
+com `core.UseModule` e `mail.NewQueued(sender, fw.Queue)` — ver seção 28.
+
+---
+
+## 30. Captcha (core/security/captcha)
+
+Desafio visual simples (código numérico distorcido, renderizado como PNG)
+pra formulários públicos — sem depender de nenhum serviço externo (Google
+reCAPTCHA, hCaptcha, etc). Zero configuração de conta, zero chave de API,
+zero chamada de rede pro navegador do visitante bloquear ou atrasar.
+
+### Uso pronto — `captcha.Store`
+
+```go
+import "kyrux/core/security/captcha"
+
+captchaStore := captcha.NewStore(fw.Sessions)
+
+router.Path("GET", "/captcha/image", captchaStore.ImageHandler(), "captcha_image"),
+
+// no handler de POST do formulário:
+if !captchaStore.Verify(ctx, ctx.Request.FormValue("captcha_answer")) {
+    // código incorreto — mostre erro e não processe o formulário
+}
+```
+
+No template:
+
+```html
+<img src="{{ url "captcha_image" }}" alt="Código de verificação" id="captchaImg">
+<input type="text" name="captcha_answer" maxlength="5" inputmode="numeric" required>
+```
+
+`ImageHandler` gera um código novo a cada requisição (útil pra um "gerar
+outro" no front — troque o `src` da imagem com um cache-buster, ex:
+`?t=Date.now()`) e guarda na sessão do visitante, substituindo o anterior.
+`Verify` confere a resposta contra o código da sessão e o consome (uso
+único) independente do resultado — sempre precisa de uma imagem nova pra
+uma nova tentativa.
+
+### Primitivas de baixo nível
+
+Pra guardar o código em outro lugar que não sessão (ex: banco, num fluxo
+sem cookie):
+
+```go
+code, err := captcha.New()      // código aleatório de captcha.CodeLength dígitos
+png, err := captcha.PNG(code)   // imagem PNG distorcida do código
+```
+
+### Como funciona a imagem
+
+Fonte bitmap 5x7 própria (só dígitos 0-9, sem ambiguidade visual tipo 0/O
+ou 1/I/l), desenhada com `image`/`image/png` da stdlib — sem
+`golang.org/x/image` nem nenhuma outra dependência de terceiros. Ruído de
+fundo (linhas e pontos aleatórios) e leve inclinação por caractere
+dificultam OCR automatizado simples.
 
 ---
 

@@ -3,6 +3,12 @@
 // Module do Core (kyrux/core). Diferente de sendgrid/ses, não precisa de
 // nenhuma conta em serviço externo — funciona com qualquer servidor SMTP
 // (um relay corporativo, Gmail, Mailtrap/Mailpit em desenvolvimento).
+//
+// Porta 465 usa TLS implícito (SMTPS) automaticamente — o handshake TLS
+// começa antes de qualquer byte do protocolo SMTP, então StartTLS não se
+// aplica e é ignorado nesse caso. Qualquer outra porta segue o
+// comportamento de sempre: texto plano, com STARTTLS opcional via useTLS
+// (necessário na maioria dos servidores modernos, ex: porta 587).
 package smtp
 
 import (
@@ -21,6 +27,11 @@ import (
 	kymail "kyrux/core/mail"
 )
 
+// portImplicitTLS é a porta convencional do SMTPS (TLS implícito) — RFC
+// 8314. Diferente de STARTTLS (porta 587, negociado depois do EHLO em
+// texto plano), aqui o handshake TLS é a primeira coisa na conexão.
+const portImplicitTLS = "465"
+
 // Client envia e-mails via SMTP. Implementa kymail.Sender.
 type Client struct {
 	host     string
@@ -28,6 +39,26 @@ type Client struct {
 	username string
 	password string
 	useTLS   bool // STARTTLS — a maioria dos servidores modernos (porta 587) exige
+
+	// implicitTLS é decidido uma vez, na construção (port == "465"), em vez
+	// de comparado a cada Send — e dá ao teste um jeito de exercitar o
+	// caminho SMTPS num listener de porta efêmera em loopback, sem precisar
+	// bind privilegiado na porta 465 de verdade.
+	implicitTLS bool
+
+	// tlsConfig, quando não-nil, substitui o *tls.Config construído por
+	// padrão (ServerName: host) nas conexões TLS (implícita ou STARTTLS).
+	// Fica nil em todo uso real — existe só para o teste conseguir confiar
+	// num certificado autoassinado de um servidor SMTPS fake em loopback,
+	// sem enfraquecer a verificação de certificado no caminho de produção.
+	tlsConfig *tls.Config
+}
+
+func (c *Client) tlsClientConfig() *tls.Config {
+	if c.tlsConfig != nil {
+		return c.tlsConfig
+	}
+	return &tls.Config{ServerName: c.host}
 }
 
 // Send monta o e-mail (texto, HTML e anexos, se houver) e o envia via uma
@@ -41,6 +72,9 @@ func (c *Client) Send(ctx context.Context, msg kymail.Message) error {
 
 	var headers strings.Builder
 	fmt.Fprintf(&headers, "From: %s\r\n", msg.From)
+	if msg.ReplyTo != "" {
+		fmt.Fprintf(&headers, "Reply-To: %s\r\n", msg.ReplyTo)
+	}
 	fmt.Fprintf(&headers, "To: %s\r\n", strings.Join(msg.To, ", "))
 	if len(msg.Cc) > 0 {
 		fmt.Fprintf(&headers, "Cc: %s\r\n", strings.Join(msg.Cc, ", "))
@@ -50,8 +84,18 @@ func (c *Client) Send(ctx context.Context, msg kymail.Message) error {
 	fmt.Fprintf(&headers, "Content-Type: %s\r\n\r\n", contentType)
 
 	addr := net.JoinHostPort(c.host, c.port)
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
+
+	var conn net.Conn
+	if c.implicitTLS {
+		// SMTPS: o TLS é a primeira coisa na conexão, antes de qualquer
+		// byte SMTP — StartTLS não entra em jogo aqui.
+		var d tls.Dialer
+		d.Config = c.tlsClientConfig()
+		conn, err = d.DialContext(ctx, "tcp", addr)
+	} else {
+		var d net.Dialer
+		conn, err = d.DialContext(ctx, "tcp", addr)
+	}
 	if err != nil {
 		return fmt.Errorf("smtp: conectar em %s: %w", addr, err)
 	}
@@ -63,8 +107,8 @@ func (c *Client) Send(ctx context.Context, msg kymail.Message) error {
 	}
 	defer client.Close()
 
-	if c.useTLS {
-		if err := client.StartTLS(&tls.Config{ServerName: c.host}); err != nil {
+	if c.useTLS && !c.implicitTLS {
+		if err := client.StartTLS(c.tlsClientConfig()); err != nil {
 			return fmt.Errorf("smtp: starttls: %w", err)
 		}
 	}
@@ -183,7 +227,8 @@ type Adapter struct {
 // New cria (mas ainda não conecta — isso só acontece em Configure) um
 // adapter SMTP. name identifica esta configuração entre outras do mesmo
 // tipo. useTLS ativa STARTTLS (necessário na maioria dos servidores
-// modernos, ex: porta 587).
+// modernos, ex: porta 587) — ignorado quando port é "465", que já usa TLS
+// implícito (SMTPS) automaticamente, sem StartTLS.
 func New(name, host, port, username, password string, useTLS bool) *Adapter {
 	return &Adapter{name: name, host: host, port: port, username: username, password: password, useTLS: useTLS}
 }
@@ -207,7 +252,14 @@ func (a *Adapter) Configure(ctx context.Context) error {
 		return fmt.Errorf("smtp: conectar em %s: %w", addr, err)
 	}
 	conn.Close()
-	a.client = &Client{host: a.host, port: a.port, username: a.username, password: a.password, useTLS: a.useTLS}
+	a.client = &Client{
+		host:        a.host,
+		port:        a.port,
+		username:    a.username,
+		password:    a.password,
+		useTLS:      a.useTLS,
+		implicitTLS: a.port == portImplicitTLS,
+	}
 	return nil
 }
 

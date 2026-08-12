@@ -41,7 +41,7 @@ Herança via `{% extends %}`, blocos com `{% block %}`, inclusão com `{% includ
 Funções globais: `{{ AppName }}`, `{{ Version }}`, `{{ Env }}`, `{{ Addr }}`, `{{ GoVersion }}`, `{{ url "nome" }}`, `{{ csrf_token }}`, `{{ statics "app" "path/arquivo.css" }}`.
 
 ### Middleware
-Recovery (panic), MaxBodySize, AllowedHosts, CORS, SecureHeaders (production), RequireLogin (SSR), RequireAuth (JWT), RateLimit (por IP), LocalhostOnly, compressão gzip.
+Recovery (panic), MaxBodySize, AllowedHosts, CORS, SecureHeaders (production, CSP configurável via `CSP_POLICY` no `.env` ou por rota com `CSPOverride`), RequireLogin (SSR), RequireAuth (JWT), RateLimit (por IP), LocalhostOnly, compressão gzip.
 
 ### Security / CSRF
 CSRF automático em POST/PUT/PATCH/DELETE via cookie + field hidden ou header `X-CSRF-Token`.
@@ -56,6 +56,12 @@ Campo de login definido via tag `kyrux:"login"` no model — imutável após o p
 
 ### Security / Crypton
 Argon2id para senhas, AES-256-GCM para campos sensíveis, HMAC-SHA256 para assinaturas.
+
+### Security / Captcha
+Desafio visual próprio (`core/security/captcha`) — código numérico distorcido
+renderizado como PNG (fonte bitmap 5x7 própria, sem `golang.org/x/image` nem
+nenhuma dependência de terceiros), validado via sessão (`captcha.Store`).
+Zero conta em serviço externo (Google reCAPTCHA, hCaptcha), zero chave de API.
 
 ### ORM
 Query builder fluente com generics: Where/OrWhere/WhereIn, Join/LeftJoin (filtro por
@@ -86,6 +92,16 @@ Fila de tarefas em background: pool de workers, retry com backoff e drenagem
 no shutdown. Diferente do EventBus, cada tarefa é processada por UM worker.
 Memória (por processo) ou Redis (`QUEUE_DRIVER=redis`, lista compartilhada
 entre réplicas via LPUSH/BRPOP).
+
+### Mail
+Serviço de e-mail de primeira classe (`fw.Mail`), igual `fw.DB`/`fw.Cache`/`fw.Queue`
+— conectado automaticamente no boot a partir de `MAIL_*` no `.env`, sobre
+`core/adapters/smtp` (STARTTLS ou SMTPS/465 automático). Com `QUEUE_ENABLED=true`,
+`fw.Mail.Send()` enfileira em `fw.Queue` e devolve na hora em vez de bloquear o
+caller esperando a sessão SMTP (`core/mail.Queued` — pool de workers, retry com
+backoff, drenagem no shutdown, tudo herdado da Queue). `fw.Mail` fica `nil` se
+não configurado ou o servidor estiver inacessível no boot — sem fallback fake,
+igual ao `fw.DB`.
 
 ### MongoDB
 Client dedicado (`core/nosql/mongo`) — fora do ORM relacional de propósito:
@@ -131,8 +147,9 @@ Lifecycle síncrono e ordenado, publicando eventos no `core/events.Bus`
 existente. Provado com **15 adapters reais**, todos testados de ponta a
 ponta contra infraestrutura de verdade (nunca mock do próprio código):
 cache em memória, Postgres, API REST/GraphQL/gRPC/SOAP (cliente+servidor),
-Kafka/RabbitMQ/NATS, storage S3/MinIO, OAuth2, e-mail via
-SMTP/SendGrid/SES, métricas Prometheus e tracing OpenTelemetry. Sugar
+Kafka/RabbitMQ/NATS, storage S3/MinIO, OAuth2, e-mail via SMTP (STARTTLS ou
+TLS implícito/SMTPS na porta 465, detectado automaticamente)/SendGrid/SES,
+métricas Prometheus e tracing OpenTelemetry. Sugar
 direto em `core.X` (`core.Cache.Memory()`, `core.Database.SQL.Postgres()`,
 `core.API.REST()`/`.SOAPClient()`, `core.Auth.OAuth2()`,
 `core.Mail.SMTP()`) só onde a dependência é grátis; o resto (GraphQL, gRPC,
@@ -228,6 +245,14 @@ ADMIN_PATH=/admin/
 # ADMIN_SUPERUSER_USERNAME=admin
 # ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 
+# ── Mail (fw.Mail) ─────────────────────────────────────────────────
+MAIL_ENABLED=false
+MAIL_HOST=smtp.exemplo.com.br
+MAIL_PORT=587                # 465 = SMTPS (TLS implícito) automático; outra porta = STARTTLS
+MAIL_USER=no-reply@exemplo.com.br
+MAIL_PASSWORD=troque-esta-senha
+# Com QUEUE_ENABLED=true acima, o envio fica assíncrono (core/mail.Queued)
+
 # ── Segurança (obrigatórios em production) ────────────────────────
 SECRET_KEY=sua-chave-secreta-forte-aqui     # mínimo 32 chars
 SESSION_TTL=3600                            # segundos
@@ -239,6 +264,9 @@ PASSWORD_PEPPER=seu-pepper-forte-aqui
 # Chave AES-256-GCM para campos kyrux:"encrypt" — nunca armazenar no banco
 # Gere com: openssl rand -base64 32
 FIELD_ENCRYPTION_KEY=sua-chave-de-criptografia-forte-aqui
+
+# Content-Security-Policy padrão (opcional) — vazia usa o DefaultCSP embutido
+# CSP_POLICY=default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:
 
 # ── Runtime (opcional) ────────────────────────────────────────────
 RUNTIME_GOGC=75              # GC percentage (padrão Go: 100)

@@ -16,6 +16,7 @@ type Attachment struct {
 // Message é um e-mail genérico, aceito por qualquer Sender.
 type Message struct {
 	From        string
+	ReplyTo     string // opcional — endereço pra onde respostas devem ir, se diferente de From
 	To          []string
 	Cc          []string
 	Bcc         []string

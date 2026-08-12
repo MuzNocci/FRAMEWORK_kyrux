@@ -108,7 +108,8 @@ type MailNamespace struct{ core *Core }
 // dependência de terceiros). Devolve o *smtp.Client, que implementa
 // mail.Sender (Send(ctx, mail.Message) error) — o mesmo formato de mensagem
 // aceito por SendGrid e SES, então trocar de provedor não exige reescrever
-// quem monta o e-mail.
+// quem monta o e-mail. Porta "465" usa TLS implícito (SMTPS) automaticamente;
+// useTLS controla STARTTLS nas demais portas (ex: 587).
 func (n MailNamespace) SMTP(name, host, port, username, password string, useTLS bool) (*smtp.Client, error) {
 	mod := smtp.New(name, host, port, username, password, useTLS)
 	return UseModule[*smtp.Client](n.core, mod, "mail.smtp."+name)

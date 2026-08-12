@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -102,23 +103,77 @@ func CORS(allowedOrigins []string) router.MiddlewareFunc {
 // SecureHeaders adiciona cabeçalhos de segurança em produção.
 // Deve ser registrado com r.Use() no bootstrap quando !debug.
 // Slice em vez de map: sem hash walk no hot path (roda em toda request).
-var secureHeadersList = [...][2]string{
+//
+// A Content-Security-Policy fica de fora deste slice — é a única exceção
+// configurável (ver SetCSP/CSP logo abaixo), os outros cabeçalhos são fixos
+// de propósito.
+var staticSecureHeaders = [...][2]string{
 	{"Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload"},
 	{"X-Content-Type-Options", "nosniff"},
 	{"X-Frame-Options", "DENY"},
 	{"Referrer-Policy", "strict-origin-when-cross-origin"},
-	{"Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"},
 	{"Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()"},
 	{"X-Permitted-Cross-Domain-Policies", "none"},
+}
+
+// DefaultCSP é a Content-Security-Policy usada por SecureHeaders enquanto
+// SetCSP não for chamado — estrita o suficiente pra a maioria dos sites
+// sem terceiro nenhum (sem scripts/estilos/fontes externas).
+const DefaultCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+
+var cspPolicy atomic.Value // string — sempre lido via CSP(), nunca direto
+
+func init() {
+	cspPolicy.Store(DefaultCSP)
+}
+
+// SetCSP troca a Content-Security-Policy padrão enviada por SecureHeaders
+// em toda rota — chame no bootstrap, normalmente a partir de uma variável
+// de ambiente (ex: CSP_POLICY), antes de servir qualquer requisição.
+// policy vazia é ignorada (mantém o valor atual — nunca zera a proteção
+// por engano com uma string vazia vinda de config ausente).
+func SetCSP(policy string) {
+	if policy != "" {
+		cspPolicy.Store(policy)
+	}
+}
+
+// CSP devolve a Content-Security-Policy ativa no momento (DefaultCSP, ou o
+// que SetCSP configurou por último).
+func CSP() string {
+	v, _ := cspPolicy.Load().(string)
+	return v
 }
 
 func SecureHeaders(next router.HandlerFunc) router.HandlerFunc {
 	return func(ctx *router.Context) {
 		h := ctx.Writer.Header()
-		for _, kv := range secureHeadersList {
+		for _, kv := range staticSecureHeaders {
 			h.Set(kv[0], kv[1])
 		}
+		h.Set("Content-Security-Policy", CSP())
 		next(ctx)
+	}
+}
+
+// CSPOverride devolve um middleware por rota que sobrescreve só a
+// Content-Security-Policy da resposta — pra páginas com uma necessidade
+// pontual (um script/iframe de terceiro só ali, ex: um mapa incorporado ou
+// um provedor de captcha) sem afrouxar a política padrão do resto do site.
+// Funciona porque middleware por rota roda depois do global (SecureHeaders
+// inclusive) na cadeia — ver router.Router.chain — então o Set aqui
+// substitui, nunca soma, o header que SecureHeaders já escreveu. Também
+// funciona sem SecureHeaders ativo (development): só adiciona um header a
+// mais, inofensivo.
+//
+//	router.Path("GET", "/contato/",
+//	    secmiddleware.CSPOverride(minhaPolicy)(views.ContactView(fw)), "contact"),
+func CSPOverride(policy string) router.MiddlewareFunc {
+	return func(next router.HandlerFunc) router.HandlerFunc {
+		return func(ctx *router.Context) {
+			ctx.Writer.Header().Set("Content-Security-Policy", policy)
+			next(ctx)
+		}
 	}
 }
 
