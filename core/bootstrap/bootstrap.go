@@ -263,6 +263,14 @@ func Init(envPath string) (*Framework, error) {
 		admin.Mount(r, dbm, store, cfg.Admin.Path, cfg.App.Name, cfg.App.Version)
 	}
 
+	// /health é usado por orquestradores (ex: HEALTHCHECK do Docker) pra
+	// checar liveness — sem tocar banco/cache, só confirma que o processo
+	// está de pé e respondendo.
+	r.Internal("GET /health", func(ctx *router.Context) {
+		ctx.Writer.Header().Set("Cache-Control", "no-store")
+		ctx.Writer.Write([]byte("ok"))
+	})
+
 	r.Internal("GET /kyrux/websocket/ws/", func(ctx *router.Context) {
 		hub.ServeHTTP(ctx.Writer, ctx.Request)
 	})

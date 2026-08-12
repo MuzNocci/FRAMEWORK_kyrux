@@ -2300,6 +2300,23 @@ Sobre `SERVER_WORKERS`: **omita em produção** — o runtime Go usa todos os CP
 por padrão, que é o mais rápido. Defina apenas para limitar consumo de CPU
 (ex: máquina compartilhada); valores abaixo do número de CPUs reduzem o throughput.
 
+### Health check
+
+O bootstrap já registra `GET /health` automaticamente — sem tocar banco,
+cache ou fila, só confirma que o processo está de pé e respondendo
+(`200 ok`, `Cache-Control: no-store`). Pronto para o `HEALTHCHECK` do
+Docker ou o probe de liveness de qualquer orquestrador, sem nenhuma
+configuração adicional:
+
+```yaml
+healthcheck:
+  test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8000/health"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 10s
+```
+
 ### Rodando os testes de performance
 
 Todos os benchmarks ficam em `core/router/benchmark/` e estão organizados em três camadas.

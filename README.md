@@ -21,6 +21,8 @@ Framework web em Go baseado em SSR, EventBus e Realtime invisível.
 
 ### Bootstrap
 Inicializa o framework: env, settings, db, cache, router, realtime, csrf, security headers.
+Registra `GET /health` automaticamente (200 "ok", sem tocar banco/cache) — pronto para o
+`HEALTHCHECK` do Docker ou probe de liveness de qualquer orquestrador.
 
 ### Environment
 Leitura de `.env` com suporte a comentários inline. Variáveis do OS têm prioridade.
