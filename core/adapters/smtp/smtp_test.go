@@ -57,8 +57,11 @@ func generateTestCert(t *testing.T) tls.Certificate {
 // runFakeSMTP fala o mínimo de SMTP necessário para aceitar uma mensagem
 // inteira (EHLO/AUTH/MAIL/RCPT/DATA/QUIT) sobre a conexão já aceita —
 // chamado tanto pelo listener TLS (SMTPS) quanto pelo listener em texto
-// plano (regressão do caminho sem TLS).
-func runFakeSMTP(conn net.Conn, onData func(data string)) {
+// plano (regressão do caminho sem TLS). onCommand (pode ser nil) recebe
+// cada linha de comando fora do bloco DATA — é como os testes de
+// envelope (MAIL FROM/RCPT TO) verificam exatamente o que foi mandado
+// pro protocolo, sem depender do corpo da mensagem.
+func runFakeSMTP(conn net.Conn, onData func(data string), onCommand func(line string)) {
 	defer conn.Close()
 	r := bufio.NewReader(conn)
 	write := func(s string) { conn.Write([]byte(s + "\r\n")) }
@@ -82,6 +85,10 @@ func runFakeSMTP(conn net.Conn, onData func(data string)) {
 			}
 			dataBuf.WriteString(line + "\n")
 			continue
+		}
+
+		if onCommand != nil {
+			onCommand(line)
 		}
 
 		upper := strings.ToUpper(line)
@@ -125,7 +132,7 @@ func startFakeSMTPS(t *testing.T, onData func(data string)) (addr string, cert t
 		if err != nil {
 			return
 		}
-		runFakeSMTP(conn, onData)
+		runFakeSMTP(conn, onData, nil)
 	}()
 
 	return ln.Addr().String(), cert
@@ -133,8 +140,9 @@ func startFakeSMTPS(t *testing.T, onData func(data string)) (addr string, cert t
 
 // startFakePlainSMTP sobe um listener TCP em texto plano — usado para
 // confirmar que portas diferentes de 465 continuam sem TLS implícito
-// (regressão do comportamento anterior à porta 465).
-func startFakePlainSMTP(t *testing.T, onData func(data string)) (addr string) {
+// (regressão do comportamento anterior à porta 465). onCommand pode ser
+// nil quando o teste só se importa com o corpo da mensagem (onData).
+func startFakePlainSMTP(t *testing.T, onData func(data string), onCommand func(line string)) (addr string) {
 	t.Helper()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -148,7 +156,7 @@ func startFakePlainSMTP(t *testing.T, onData func(data string)) (addr string) {
 		if err != nil {
 			return
 		}
-		runFakeSMTP(conn, onData)
+		runFakeSMTP(conn, onData, onCommand)
 	}()
 
 	return ln.Addr().String()
@@ -209,7 +217,7 @@ func TestClientSendPorta465UsaTLSImplicito(t *testing.T) {
 
 func TestClientSendPortaDiferenteDe465NaoUsaTLSImplicito(t *testing.T) {
 	var received string
-	addrFull := startFakePlainSMTP(t, func(data string) { received = data })
+	addrFull := startFakePlainSMTP(t, func(data string) { received = data }, nil)
 
 	host, port, err := net.SplitHostPort(addrFull)
 	if err != nil {
@@ -244,7 +252,7 @@ func TestClientSendPortaDiferenteDe465NaoUsaTLSImplicito(t *testing.T) {
 
 func TestClientSendComReplyToIncluiHeader(t *testing.T) {
 	var received string
-	addrFull := startFakePlainSMTP(t, func(data string) { received = data })
+	addrFull := startFakePlainSMTP(t, func(data string) { received = data }, nil)
 
 	host, port, err := net.SplitHostPort(addrFull)
 	if err != nil {
@@ -280,7 +288,7 @@ func TestClientSendComReplyToIncluiHeader(t *testing.T) {
 
 func TestClientSendSemReplyToNaoIncluiHeader(t *testing.T) {
 	var received string
-	addrFull := startFakePlainSMTP(t, func(data string) { received = data })
+	addrFull := startFakePlainSMTP(t, func(data string) { received = data }, nil)
 
 	host, port, err := net.SplitHostPort(addrFull)
 	if err != nil {
@@ -310,5 +318,81 @@ func TestClientSendSemReplyToNaoIncluiHeader(t *testing.T) {
 
 	if strings.Contains(received, "Reply-To:") {
 		t.Errorf("não esperava header Reply-To sem ReplyTo na mensagem, recebeu: %q", received)
+	}
+}
+
+// TestClientSendComNomeDeExibicaoUsaEndereçoPuroNoEnvelope reproduz um bug
+// real de produção: From/To com nome de exibição ("Nome <email>") é o
+// formato certo pro cabeçalho From:/To: da mensagem, mas passado direto
+// pro protocolo SMTP (MAIL FROM/RCPT TO) é sintaxe inválida — o servidor
+// real (mail.kyrux.com.br) rejeitava com "501 Bad sender's system
+// address" antes desta correção. O header continua com o nome (é onde
+// pertence); só o envelope (MAIL FROM/RCPT TO) precisa do endereço puro.
+func TestClientSendComNomeDeExibicaoUsaEnderecoPuroNoEnvelope(t *testing.T) {
+	var received string
+	var mailFromCmd, rcptToCmd string
+	addrFull := startFakePlainSMTP(t, func(data string) { received = data }, func(line string) {
+		upper := strings.ToUpper(line)
+		switch {
+		case strings.HasPrefix(upper, "MAIL FROM"):
+			mailFromCmd = line
+		case strings.HasPrefix(upper, "RCPT TO"):
+			rcptToCmd = line
+		}
+	})
+
+	host, port, err := net.SplitHostPort(addrFull)
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+
+	client := &Client{host: host, port: port}
+
+	msg := kymail.Message{
+		From:    "Maria da Silva <no-reply@cipetrannorte.com.br>",
+		To:      []string{"Atendimento CIPETRAN <atendimento@cipetrannorte.com.br>"},
+		Subject: "assunto com nome de exibição",
+		Text:    "corpo",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Send(ctx, msg); err != nil {
+		t.Fatalf("Send: %v (é exatamente esse tipo de erro que o servidor real devolvia: envelope malformado)", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for received == "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Envelope (protocolo SMTP): só o endereço, sem nome nem "<...>" de sobra.
+	if mailFromCmd != "MAIL FROM:<no-reply@cipetrannorte.com.br>" {
+		t.Errorf("MAIL FROM = %q, esperava endereço puro sem nome de exibição", mailFromCmd)
+	}
+	if rcptToCmd != "RCPT TO:<atendimento@cipetrannorte.com.br>" {
+		t.Errorf("RCPT TO = %q, esperava endereço puro sem nome de exibição", rcptToCmd)
+	}
+
+	// Cabeçalho da mensagem: nome de exibição preservado — é onde ele deve estar.
+	if !strings.Contains(received, "From: Maria da Silva <no-reply@cipetrannorte.com.br>") {
+		t.Errorf("esperava o nome de exibição preservado no header From:, recebeu: %q", received)
+	}
+}
+
+func TestEnvelopeAddressExtraiEnderecoPuro(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"Maria da Silva <no-reply@cipetrannorte.com.br>", "no-reply@cipetrannorte.com.br"},
+		{"no-reply@cipetrannorte.com.br", "no-reply@cipetrannorte.com.br"},
+		{"<no-reply@cipetrannorte.com.br>", "no-reply@cipetrannorte.com.br"},
+	}
+	for _, c := range cases {
+		if got := envelopeAddress(c.in); got != c.want {
+			t.Errorf("envelopeAddress(%q) = %q, esperava %q", c.in, got, c.want)
+		}
 	}
 }

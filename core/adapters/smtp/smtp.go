@@ -20,6 +20,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"net/textproto"
 	"strings"
@@ -122,12 +123,12 @@ func (c *Client) Send(ctx context.Context, msg kymail.Message) error {
 		}
 	}
 
-	if err := client.Mail(msg.From); err != nil {
+	if err := client.Mail(envelopeAddress(msg.From)); err != nil {
 		return fmt.Errorf("smtp: MAIL FROM: %w", err)
 	}
 	recipients := append(append(append([]string{}, msg.To...), msg.Cc...), msg.Bcc...)
 	for _, rcpt := range recipients {
-		if err := client.Rcpt(rcpt); err != nil {
+		if err := client.Rcpt(envelopeAddress(rcpt)); err != nil {
 			return fmt.Errorf("smtp: RCPT TO %s: %w", rcpt, err)
 		}
 	}
@@ -144,6 +145,22 @@ func (c *Client) Send(ctx context.Context, msg kymail.Message) error {
 	}
 
 	return client.Quit()
+}
+
+// envelopeAddress extrai o endereço puro de s pra uso nos comandos SMTP
+// MAIL FROM/RCPT TO — que exigem só o endereço, sem o nome de exibição.
+// msg.From/To/Cc aceitam o formato "Nome <email>" (correto e esperado nos
+// cabeçalhos From:/To:/Cc: da mensagem, escritos à parte em Send), mas
+// passar essa mesma string pro protocolo SMTP em si é sintaxe inválida —
+// servidores reais rejeitam com algo como "501 Bad sender's system
+// address". Se s não for parseável (endereço já vem puro, ou é inválido
+// por outro motivo), devolve s como veio: deixa o servidor SMTP recusar
+// com um erro melhor do que qualquer coisa que a gente tentasse adivinhar.
+func envelopeAddress(s string) string {
+	if addr, err := mail.ParseAddress(s); err == nil {
+		return addr.Address
+	}
+	return s
 }
 
 // buildMIME monta o corpo e o Content-Type — texto puro se não houver HTML
