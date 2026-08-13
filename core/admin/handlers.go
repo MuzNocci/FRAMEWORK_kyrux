@@ -84,6 +84,7 @@ type formField struct {
 	Checked  bool
 	ReadOnly bool
 	IsHash   bool
+	IsImage  bool
 }
 
 type loginPageData struct {
@@ -471,6 +472,7 @@ func (s *site) formData(ctx *router.Context, rm *registeredModel, isEdit bool, e
 			Label:    f.Label,
 			Widget:   f.Widget,
 			IsHash:   f.IsHash,
+			IsImage:  f.IsImage,
 			ReadOnly: f.IsAutoNow,
 		}
 		if prefill != nil && !f.IsHash {
@@ -517,12 +519,12 @@ func (s *site) handleCreate(ctx *router.Context) {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusServiceUnavailable)
 		return
 	}
-	if err := ctx.Request.ParseForm(); err != nil {
+	if err := parseAdminForm(ctx.Request); err != nil {
 		data := s.formData(ctx, rm, false, "dados de formulário inválidos", nil, "")
 		renderPage(ctx.Writer, formTpl, data)
 		return
 	}
-	if err := rm.create(db, ctx.Request.PostForm); err != nil {
+	if err := rm.create(db, ctx.Request); err != nil {
 		data := s.formData(ctx, rm, false, err.Error(), ctx.Request.PostForm, "")
 		renderPage(ctx.Writer, formTpl, data)
 		return
@@ -567,11 +569,11 @@ func (s *site) handleUpdate(ctx *router.Context) {
 		return
 	}
 	pk := ctx.Param("pk")
-	if err := ctx.Request.ParseForm(); err != nil {
+	if err := parseAdminForm(ctx.Request); err != nil {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusBadRequest)
 		return
 	}
-	if err := rm.update(db, pk, ctx.Request.PostForm); err != nil {
+	if err := rm.update(db, pk, ctx.Request); err != nil {
 		data := s.formData(ctx, rm, true, err.Error(), ctx.Request.PostForm, pk)
 		renderPage(ctx.Writer, formTpl, data)
 		return

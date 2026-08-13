@@ -2,7 +2,7 @@
 <div class="page-head"><h1>{{if .IsEdit}}Editar {{else}}Novo {{end}}{{.Label}}</h1></div>
 {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
 <div class="panel" style="padding:1.5rem">
-<form method="POST" action="{{.Action}}" class="form-shell">
+<form method="POST" action="{{.Action}}" class="form-shell" enctype="multipart/form-data">
   <input type="hidden" name="{{.CSRFField}}" value="{{.CSRFToken}}">
   {{if .IsEdit}}
   <div class="form-group">
@@ -21,9 +21,12 @@
         <label for="f-{{.Column}}" style="margin:0">{{.Label}}</label>
       </div>
     {{else}}
-      <label for="f-{{.Column}}">{{.Label}}{{if .IsHash}} <span class="hint">(deixe em branco para não alterar)</span>{{end}}</label>
+      <label for="f-{{.Column}}">{{.Label}}{{if .IsHash}} <span class="hint">(deixe em branco para não alterar)</span>{{else if .IsImage}} <span class="hint">(deixe em branco para manter a imagem atual)</span>{{end}}</label>
       {{if eq .Widget "password"}}
         <input class="form-control" type="password" id="f-{{.Column}}" name="{{.Column}}" autocomplete="new-password">
+      {{else if eq .Widget "file"}}
+        {{if .Value}}<img src="{{.Value}}" alt="" class="admin-image-preview">{{end}}
+        <input class="form-control" type="file" id="f-{{.Column}}" name="{{.Column}}" accept="image/jpeg,image/png,image/gif,image/webp">
       {{else if eq .Widget "number"}}
         <input class="form-control" type="number" step="1" id="f-{{.Column}}" name="{{.Column}}" value="{{.Value}}">
       {{else if eq .Widget "number-float"}}

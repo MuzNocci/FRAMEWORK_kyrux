@@ -55,6 +55,34 @@ func StaticHandler(dir string) http.Handler {
 	return http.FileServer(http.Dir(dir))
 }
 
+// dirListingSafe embrulha um http.FileSystem para recusar listagem de
+// diretório (mesma proteção de noDirListing, reaproveitada aqui).
+type dirListingSafe struct{ http.FileSystem }
+
+func (d dirListingSafe) Open(name string) (http.File, error) {
+	f, err := d.FileSystem.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return noDirListing(f)
+}
+
+// MediaHandler serve os arquivos enviados via admin (campos kyrux:"image",
+// salvos em medias/<app>/<tabela>/ por core/admin) a partir de dir (ex:
+// "medias"). Cache longo: cada upload recebe nome único (nunca sobrescrito
+// em disco), então tratar como imutável é seguro mesmo em produção.
+func MediaHandler(dir string) http.Handler {
+	fs := http.FileServer(dirListingSafe{http.Dir(dir)})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isDebug() {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		fs.ServeHTTP(w, r)
+	})
+}
+
 func MultiStaticHandler(appsDir string) http.Handler {
 	fs := http.FileServer(&multiStatic{appsDir: appsDir})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

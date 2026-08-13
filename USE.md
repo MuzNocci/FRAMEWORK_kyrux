@@ -1102,6 +1102,7 @@ type Cliente struct {
 | `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo `Update` (ex: `updated_at`). Também preenche no `Create` se o campo estiver zerado. |
 | `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration. A tabela referenciada precisa existir antes (declare-a primeiro ou em migration anterior). |
 | `kyrux:"fts"` | Habilita busca full-text nativa via `Query.Search()` — ver [Busca full-text (Search)](#busca-full-text-search) abaixo. |
+| `kyrux:"image"` | Campo `string` vira upload de arquivo no admin — ver [Upload de imagem](#upload-de-imagem-kyruximage) na seção 20. |
 
 > **`default:valor`** — quando o campo tiver valor zero Go (`""`, `0`, `false`),
 > o ORM usa o literal diretamente no SQL (`VALUES (..., NOW(), ...)`), sem passar como argumento.
@@ -2041,6 +2042,47 @@ func Register(r *router.Router, fw *bootstrap.Framework) {
 marcados `kyrux:"hash"` (nunca exibidos, em lugar nenhum). Sem `SearchFields`,
 a busca fica desativada para aquele model.
 
+### Upload de imagem (`kyrux:"image"`)
+
+Um campo `string` marcado `kyrux:"image"` vira um input de upload no
+formulário do admin em vez de um campo de texto — o dev não precisa hospedar
+a imagem em outro lugar nem colar URL manualmente:
+
+```go
+type Produto struct {
+    ID    int64  `kyrux:"pk"`
+    Nome  string `kyrux:"size:255"`
+    Capa  string `kyrux:"size:500,image"` // vira <input type="file"> no admin
+}
+```
+
+```go
+admin.Register[models.Produto]("produtos", "Produtos",
+    admin.App("catalogo"), // obrigatório para todo model com campo image
+)
+```
+
+- O arquivo é salvo em `medias/<app>/<tabela>/<nome-único>` (na raiz do
+  projeto, ao lado de `statics/`) e servido de volta em
+  `/medias/<app>/<tabela>/<nome-único>` — o valor gravado no campo já é esse
+  caminho pronto para usar em `<img src="...">`, sem helper de template
+  adicional.
+- `admin.App("nome")` é **obrigatório** em qualquer model com campo
+  `kyrux:"image"` — é o que define a pasta de destino do upload; falha no
+  boot (panic) se faltar.
+- Só aceita `jpeg`, `png`, `gif` e `webp` — validado pelos bytes reais do
+  arquivo (`http.DetectContentType`), não pela extensão nem pelo
+  Content-Type que o navegador declarou (ambos falsificáveis).
+- Nome do arquivo em disco é gerado (prefixo aleatório + nome original
+  saneado) — nunca sobrescreve um upload anterior e nunca confia no nome
+  enviado pelo navegador para montar o caminho (bloqueia path traversal do
+  tipo `../../etc/passwd`).
+- Na edição, deixar o campo em branco mantém a imagem atual (mesmo padrão de
+  `kyrux:"hash"` para senha) — só troca se um novo arquivo for selecionado.
+- `/medias/` nunca lista diretório (mesma proteção de `/statics/`) e recebe
+  `Cache-Control: immutable` em produção — seguro porque cada upload tem nome
+  único, nunca é sobrescrito no lugar.
+
 ### Sem banco configurado
 
 Se `ADMIN_ENABLED=true` e nenhum banco estiver configurado no `.env`, o
@@ -2130,6 +2172,7 @@ ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 | Ordenação por coluna (clique no cabeçalho) | ✅ |
 | Paginação | ✅ — Anterior/Próxima, sem total exato (ver nota abaixo) |
 | hash/encrypt automático na escrita | ✅ — reaproveita `orm.Create`/`Query.Update` |
+| Upload de imagem | ✅ — `kyrux:"image"` + `admin.App("nome")` |
 | Múltiplas conexões | ✅ — `admin.Conn("nome")` |
 | Relações (FK como dropdown, inlines) | ❌ — campo FK aparece como número simples |
 | Filtros avançados / actions em lote | ❌ |
@@ -3194,6 +3237,7 @@ orm.FromDB[T](db).All()  // → SELECT * FROM tenant_abc.tabela
 | `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo Update; preenche no Create se zerado |
 | `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration |
 | `kyrux:"fts"` | Full-text nativo via `Query.Search` — GIN (Postgres), FULLTEXT (MySQL) ou FTS5 (SQLite) |
+| `kyrux:"image"` | Upload no admin — salva em `medias/<app>/<tabela>/`, exige `admin.App("nome")` |
 
 ### Auth — todos os métodos
 

@@ -44,12 +44,13 @@ type adminField struct {
 	Column    string
 	Label     string // nome humanizado, ex: "Criado Em"
 	GoIndex   int
-	Widget    string // "text" | "number" | "number-float" | "checkbox" | "datetime" | "password"
+	Widget    string // "text" | "number" | "number-float" | "checkbox" | "datetime" | "password" | "file"
 	Optional  bool   // campo é ponteiro (*T) — em branco vira nil/NULL
 	IsPK      bool
 	IsHash    bool
 	IsEncrypt bool
 	IsAutoNow bool
+	IsImage   bool
 }
 
 // registeredModel é a representação type-erased de um Register[T] — as
@@ -58,6 +59,7 @@ type registeredModel struct {
 	Slug   string
 	Label  string
 	Conn   string
+	App    string
 	Table  string
 	Fields []adminField
 
@@ -86,6 +88,14 @@ type Option func(*registeredModel)
 // Conn define a conexão nomeada usada pelo model (padrão: "default").
 func Conn(name string) Option {
 	return func(rm *registeredModel) { rm.Conn = name }
+}
+
+// App identifica o app dono do model (o mesmo nome usado em
+// bootstrap.RegisterApp/apps/<nome>) — obrigatório quando o model tem algum
+// campo kyrux:"image", pois define a pasta de destino do upload
+// (medias/<app>/<tabela>/).
+func App(name string) Option {
+	return func(rm *registeredModel) { rm.App = name }
 }
 
 // ListFields define quais campos aparecem na listagem, na ordem informada.
@@ -141,6 +151,11 @@ func Register[T any](slug, label string, opts ...Option) {
 	}
 
 	rm.Fields = buildAdminFields(meta, structType)
+	for _, f := range rm.Fields {
+		if f.IsImage && rm.App == "" {
+			panic(fmt.Sprintf("admin: model %q tem campo de imagem (%q) mas não foi registrado com admin.App(...) — obrigatório para saber em qual pasta de medias/ salvar o upload", label, f.Label))
+		}
+	}
 	rm.listCols = resolveColumns(rm.Fields, rm.wantList, defaultListCols)
 	rm.searchCols = resolveColumns(rm.Fields, rm.wantSearch, nil)
 
@@ -161,7 +176,11 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 	fields := make([]adminField, 0, len(meta.Fields))
 	for _, f := range meta.Fields {
 		sf := t.Field(f.GoIndex)
-		widget, optional := detectWidget(sf.Type, f.IsHash)
+		if f.IsImage && sf.Type.Kind() != reflect.String &&
+			!(sf.Type.Kind() == reflect.Ptr && sf.Type.Elem().Kind() == reflect.String) {
+			panic(fmt.Sprintf("admin: campo %q tem kyrux:\"image\" mas não é string — o caminho salvo pelo upload precisa de um campo string/*string", f.Name))
+		}
+		widget, optional := detectWidget(sf.Type, f.IsHash, f.IsImage)
 		fields = append(fields, adminField{
 			GoName:    f.Name,
 			Column:    f.Column,
@@ -173,19 +192,27 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 			IsHash:    f.IsHash,
 			IsEncrypt: f.IsEncrypt,
 			IsAutoNow: f.IsAutoNow,
+			IsImage:   f.IsImage,
 		})
 	}
 	return fields
 }
 
 // detectWidget escolhe o tipo de input HTML a partir do tipo Go do campo.
-// Ponteiros são desembrulhados (Optional=true); hash sempre vira "password".
-func detectWidget(t reflect.Type, isHash bool) (widget string, optional bool) {
+// Ponteiros são desembrulhados (Optional=true); hash sempre vira "password";
+// image sempre vira "file" (upload), mesmo sendo uma coluna string por baixo.
+func detectWidget(t reflect.Type, isHash, isImage bool) (widget string, optional bool) {
 	if isHash {
 		return "password", false
 	}
+	if isImage {
+		if t.Kind() == reflect.Ptr {
+			return "file", true
+		}
+		return "file", false
+	}
 	if t.Kind() == reflect.Ptr {
-		w, _ := detectWidget(t.Elem(), false)
+		w, _ := detectWidget(t.Elem(), false, false)
 		return w, true
 	}
 	switch t.Kind() {

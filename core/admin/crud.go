@@ -2,7 +2,7 @@ package admin
 
 import (
 	"fmt"
-	"net/url"
+	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
@@ -26,8 +26,8 @@ type adminRow struct {
 type (
 	listFunc        func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) (rows []adminRow, hasNext bool, err error)
 	getFunc         func(db *database.DB, pk string) (adminRow, error)
-	createFunc      func(db *database.DB, form url.Values) error
-	updateFunc      func(db *database.DB, pk string, form url.Values) error
+	createFunc      func(db *database.DB, r *http.Request) error
+	updateFunc      func(db *database.DB, pk string, r *http.Request) error
 	deleteFunc      func(db *database.DB, pk string) error
 	ensureTableFunc func(db *database.DB) error
 )
@@ -80,11 +80,22 @@ func registerCRUD[T any](rm *registeredModel) {
 		return rowFromStructForm(reflect.ValueOf(item).Elem(), rm.Fields, rm.pkColumn), nil
 	}
 
-	rm.create = func(db *database.DB, form url.Values) error {
+	rm.create = func(db *database.DB, r *http.Request) error {
 		var obj T
 		v := reflect.ValueOf(&obj).Elem()
+		form := r.PostForm
 		for _, f := range rm.Fields {
 			if f.IsPK || f.IsAutoNow {
+				continue
+			}
+			if f.IsImage {
+				path, ok, err := uploadFieldValue(r, rm.App, rm.Table, f)
+				if err != nil {
+					return err
+				}
+				if ok {
+					v.Field(f.GoIndex).SetString(path)
+				}
 				continue
 			}
 			raw := form.Get(f.Column)
@@ -98,16 +109,29 @@ func registerCRUD[T any](rm *registeredModel) {
 		return orm.Create(db, &obj)
 	}
 
-	rm.update = func(db *database.DB, pk string, form url.Values) error {
+	rm.update = func(db *database.DB, pk string, r *http.Request) error {
 		pkArg, err := parsePKArg(pk, rm.pkKind)
 		if err != nil {
 			return err
 		}
 		var scratch T
 		v := reflect.ValueOf(&scratch).Elem()
+		form := r.PostForm
 		values := make(map[string]any, len(rm.Fields))
 		for _, f := range rm.Fields {
 			if f.IsPK || f.IsAutoNow {
+				continue
+			}
+			if f.IsImage {
+				path, ok, err := uploadFieldValue(r, rm.App, rm.Table, f)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					continue // sem arquivo novo no edit = mantém o caminho atual
+				}
+				v.Field(f.GoIndex).SetString(path)
+				values[f.Column] = path
 				continue
 			}
 			raw := form.Get(f.Column)

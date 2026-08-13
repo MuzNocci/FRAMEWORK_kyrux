@@ -291,6 +291,9 @@ func Init(envPath string) (*Framework, error) {
 	static := render.MultiStaticHandler("apps")
 	r.HandlePrefix("GET /statics/", http.StripPrefix("/statics/", static))
 
+	media := render.MediaHandler("medias")
+	r.HandlePrefix("GET /medias/", http.StripPrefix("/medias/", media))
+
 	if cfg.App.Debug {
 		lr := hotreload.NewHub()
 		lr.Watch("apps")
