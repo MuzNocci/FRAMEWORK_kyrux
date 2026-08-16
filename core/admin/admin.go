@@ -183,7 +183,7 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 			!(sf.Type.Kind() == reflect.Ptr && sf.Type.Elem().Kind() == reflect.String) {
 			panic(fmt.Sprintf("admin: campo %q tem kyrux:\"image\" mas não é string — o caminho salvo pelo upload precisa de um campo string/*string", f.Name))
 		}
-		widget, optional := detectWidget(sf.Type, f.IsHash, f.IsImage, f.FK != "")
+		widget, optional := detectWidget(sf.Type, f.IsHash, f.IsImage, f.FK != "", f.Size)
 		fields = append(fields, adminField{
 			GoName:    f.Name,
 			Column:    f.Column,
@@ -208,8 +208,10 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 // Ponteiros são desembrulhados (Optional=true); hash sempre vira "password";
 // image sempre vira "file" (upload); fk (kyrux:"fk:tabela") sempre vira
 // "select", mesmo sem fklabel — evita que o admin aceite um id que não
-// existe na tabela referenciada.
-func detectWidget(t reflect.Type, isHash, isImage, isFK bool) (widget string, optional bool) {
+// existe na tabela referenciada. size é o kyrux:"size:N" do campo: uma
+// string SEM size (TEXT ilimitado no banco, não VARCHAR(N)) vira
+// "textarea" — o widget acompanha o tipo real da coluna.
+func detectWidget(t reflect.Type, isHash, isImage, isFK bool, size int) (widget string, optional bool) {
 	if isHash {
 		return "password", false
 	}
@@ -226,7 +228,7 @@ func detectWidget(t reflect.Type, isHash, isImage, isFK bool) (widget string, op
 		return "select", false
 	}
 	if t.Kind() == reflect.Ptr {
-		w, _ := detectWidget(t.Elem(), false, false, false)
+		w, _ := detectWidget(t.Elem(), false, false, false, size)
 		return w, true
 	}
 	switch t.Kind() {
@@ -240,6 +242,10 @@ func detectWidget(t reflect.Type, isHash, isImage, isFK bool) (widget string, op
 	case reflect.Struct:
 		if t == timeType {
 			return "datetime", false
+		}
+	case reflect.String:
+		if size == 0 {
+			return "textarea", false
 		}
 	}
 	return "text", false

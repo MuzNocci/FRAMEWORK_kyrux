@@ -34,6 +34,8 @@
           <option value="{{.Value}}"{{if eq .Value $fieldValue}} selected{{end}}>{{.Label}}</option>
           {{end}}
         </select>
+      {{else if eq .Widget "textarea"}}
+        <textarea class="form-control" id="f-{{.Column}}" name="{{.Column}}" rows="6">{{.Value}}</textarea>
       {{else if eq .Widget "number"}}
         <input class="form-control" type="number" step="1" id="f-{{.Column}}" name="{{.Column}}" value="{{.Value}}">
       {{else if eq .Widget "number-float"}}
