@@ -43,7 +43,7 @@ func (m *multiStatic) Open(name string) (http.File, error) {
 		subPath = parts[1]
 	}
 
-	path := filepath.Join(m.appsDir, appName, "assets", subPath)
+	path := filepath.Join(m.appsDir, appName, "statics", subPath)
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, os.ErrNotExist
