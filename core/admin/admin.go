@@ -44,13 +44,16 @@ type adminField struct {
 	Column    string
 	Label     string // nome humanizado, ex: "Criado Em"
 	GoIndex   int
-	Widget    string // "text" | "number" | "number-float" | "checkbox" | "datetime" | "password" | "file"
+	Widget    string // "text" | "number" | "number-float" | "checkbox" | "datetime" | "password" | "file" | "select"
 	Optional  bool   // campo é ponteiro (*T) — em branco vira nil/NULL
 	IsPK      bool
 	IsHash    bool
 	IsEncrypt bool
 	IsAutoNow bool
 	IsImage   bool
+	IsFK      bool
+	FKTable   string
+	FKLabel   string // coluna do model relacionado usada como rótulo; vazio = mostra o id
 }
 
 // registeredModel é a representação type-erased de um Register[T] — as
@@ -180,7 +183,7 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 			!(sf.Type.Kind() == reflect.Ptr && sf.Type.Elem().Kind() == reflect.String) {
 			panic(fmt.Sprintf("admin: campo %q tem kyrux:\"image\" mas não é string — o caminho salvo pelo upload precisa de um campo string/*string", f.Name))
 		}
-		widget, optional := detectWidget(sf.Type, f.IsHash, f.IsImage)
+		widget, optional := detectWidget(sf.Type, f.IsHash, f.IsImage, f.FK != "")
 		fields = append(fields, adminField{
 			GoName:    f.Name,
 			Column:    f.Column,
@@ -193,6 +196,9 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 			IsEncrypt: f.IsEncrypt,
 			IsAutoNow: f.IsAutoNow,
 			IsImage:   f.IsImage,
+			IsFK:      f.FK != "",
+			FKTable:   f.FK,
+			FKLabel:   f.FKLabel,
 		})
 	}
 	return fields
@@ -200,8 +206,10 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 
 // detectWidget escolhe o tipo de input HTML a partir do tipo Go do campo.
 // Ponteiros são desembrulhados (Optional=true); hash sempre vira "password";
-// image sempre vira "file" (upload), mesmo sendo uma coluna string por baixo.
-func detectWidget(t reflect.Type, isHash, isImage bool) (widget string, optional bool) {
+// image sempre vira "file" (upload); fk (kyrux:"fk:tabela") sempre vira
+// "select", mesmo sem fklabel — evita que o admin aceite um id que não
+// existe na tabela referenciada.
+func detectWidget(t reflect.Type, isHash, isImage, isFK bool) (widget string, optional bool) {
 	if isHash {
 		return "password", false
 	}
@@ -211,8 +219,14 @@ func detectWidget(t reflect.Type, isHash, isImage bool) (widget string, optional
 		}
 		return "file", false
 	}
+	if isFK {
+		if t.Kind() == reflect.Ptr {
+			return "select", true
+		}
+		return "select", false
+	}
 	if t.Kind() == reflect.Ptr {
-		w, _ := detectWidget(t.Elem(), false, false)
+		w, _ := detectWidget(t.Elem(), false, false, false)
 		return w, true
 	}
 	switch t.Kind() {

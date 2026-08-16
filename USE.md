@@ -1100,7 +1100,8 @@ type Cliente struct {
 | `kyrux:"encrypt"` | **AES-256-GCM** — cifra na escrita, decifra automaticamente na leitura. Requer `FIELD_ENCRYPTION_KEY`. |
 | `kyrux:"login"` | Exclusivo do `auth.User`. Marca o campo de login (username ou email). Apenas um campo por struct. Imutável após o primeiro migrate. |
 | `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo `Update` (ex: `updated_at`). Também preenche no `Create` se o campo estiver zerado. |
-| `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration. A tabela referenciada precisa existir antes (declare-a primeiro ou em migration anterior). |
+| `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration. A tabela referenciada precisa existir antes (declare-a primeiro ou em migration anterior). No admin, vira `<select>` com as linhas existentes. |
+| `kyrux:"fklabel:coluna"` | Só afeta o admin — coluna de `tabela` (do `fk:`) usada como rótulo no `<select>`. Sem isso, mostra o id. |
 | `kyrux:"fts"` | Habilita busca full-text nativa via `Query.Search()` — ver [Busca full-text (Search)](#busca-full-text-search) abaixo. |
 | `kyrux:"image"` | Campo `string` vira upload de arquivo no admin — ver [Upload de imagem](#upload-de-imagem-kyruximage) na seção 20. |
 
@@ -2174,13 +2175,37 @@ ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 | hash/encrypt automático na escrita | ✅ — reaproveita `orm.Create`/`Query.Update` |
 | Upload de imagem | ✅ — `kyrux:"image"` + `admin.App("nome")` |
 | Múltiplas conexões | ✅ — `admin.Conn("nome")` |
-| Relações (FK como dropdown, inlines) | ❌ — campo FK aparece como número simples |
+| FK como `<select>` (só ids existentes) | ✅ — automático em qualquer `kyrux:"fk:tabela"`; rótulo via `kyrux:"fklabel:coluna"` |
+| Inlines (editar relação dentro do model pai) | ❌ |
 | Filtros avançados / actions em lote | ❌ |
 | Histórico de alterações | ❌ |
 
-Relações e filtros avançados ficam de fora por design nesta primeira versão —
+Inlines e filtros avançados ficam de fora por design nesta primeira versão —
 o objetivo é um CRUD sólido e seguro sobre um model por vez, não replicar toda
 a superfície do Django admin.
+
+### FK como `<select>` (`kyrux:"fklabel:coluna"`)
+
+Todo campo com `kyrux:"fk:tabela"` vira automaticamente um `<select>` no
+admin, populado com as linhas que realmente existem em `tabela` — evita
+salvar um id que não existe (o que antes só falhava depois, na constraint
+do banco). Sem `fklabel`, cada opção mostra o próprio id; com `fklabel`,
+mostra a coluna indicada:
+
+```go
+type Pedido struct {
+    ID         int64  `kyrux:"pk"`
+    ClienteID  int64  `kyrux:"column:cliente_id,fk:clientes,fklabel:nome"`
+}
+```
+
+- A tabela referenciada precisa ter uma coluna `id` (mesma suposição já
+  feita pela migration ao gerar `REFERENCES tabela(id)`).
+- O `<select>` carrega até 1000 linhas (`ORDER BY` pela própria coluna de
+  rótulo) — tabelas maiores continuam funcionais, só não listam tudo.
+- Editando um registro cujo valor atual não está mais entre as opções
+  carregadas (linha órfã/excluída), o valor continua visível como uma
+  opção extra em vez de sumir silenciosamente do formulário.
 
 A listagem usa `PaginateNoCount` internamente (não `Paginate`) — a página
 mostra "Página N" e Anterior/Próxima, mas não "N de M" nem o total de
@@ -3235,7 +3260,8 @@ orm.FromDB[T](db).All()  // → SELECT * FROM tenant_abc.tabela
 | `kyrux:"encrypt"` | AES-256-GCM: cifra na escrita, decifra na leitura |
 | `kyrux:"login"` | Exclusivo do `auth.User` — define o campo de login; imutável após migrate |
 | `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo Update; preenche no Create se zerado |
-| `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration |
+| `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration; vira `<select>` no admin |
+| `kyrux:"fklabel:coluna"` | Rótulo do `<select>` de FK no admin (padrão: o id) |
 | `kyrux:"fts"` | Full-text nativo via `Query.Search` — GIN (Postgres), FULLTEXT (MySQL) ou FTS5 (SQLite) |
 | `kyrux:"image"` | Upload no admin — salva em `medias/<app>/<tabela>/`, exige `admin.App("nome")` |
 

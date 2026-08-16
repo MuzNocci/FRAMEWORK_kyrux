@@ -27,6 +27,13 @@
       {{else if eq .Widget "file"}}
         {{if .Value}}<img src="{{.Value}}" alt="" class="admin-image-preview">{{end}}
         <input class="form-control" type="file" id="f-{{.Column}}" name="{{.Column}}" accept="image/jpeg,image/png,image/gif,image/webp">
+      {{else if eq .Widget "select"}}
+        {{$fieldValue := .Value}}
+        <select class="form-control" id="f-{{.Column}}" name="{{.Column}}">
+          {{range .Options}}
+          <option value="{{.Value}}"{{if eq .Value $fieldValue}} selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
       {{else if eq .Widget "number"}}
         <input class="form-control" type="number" step="1" id="f-{{.Column}}" name="{{.Column}}" value="{{.Value}}">
       {{else if eq .Widget "number-float"}}

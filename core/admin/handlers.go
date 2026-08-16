@@ -85,6 +85,8 @@ type formField struct {
 	ReadOnly bool
 	IsHash   bool
 	IsImage  bool
+	IsFK     bool
+	Options  []fkOption
 }
 
 type loginPageData struct {
@@ -458,7 +460,7 @@ func (s *site) handleList(ctx *router.Context) {
 // valores atuais dos campos (linha do banco na edição, ou o POST submetido
 // quando a validação falha e o form precisa ser re-exibido com os dados
 // digitados). Campos hash nunca são preenchidos a partir de prefill.
-func (s *site) formData(ctx *router.Context, rm *registeredModel, isEdit bool, errMsg string, prefill url.Values, pk string) formPageData {
+func (s *site) formData(ctx *router.Context, db *database.DB, rm *registeredModel, isEdit bool, errMsg string, prefill url.Values, pk string) formPageData {
 	fields := make([]formField, 0, len(rm.Fields))
 	for _, f := range rm.Fields {
 		if f.IsPK {
@@ -473,12 +475,35 @@ func (s *site) formData(ctx *router.Context, rm *registeredModel, isEdit bool, e
 			Widget:   f.Widget,
 			IsHash:   f.IsHash,
 			IsImage:  f.IsImage,
+			IsFK:     f.IsFK,
 			ReadOnly: f.IsAutoNow,
 		}
 		if prefill != nil && !f.IsHash {
 			raw := prefill.Get(f.Column)
 			ff.Value = raw
 			ff.Checked = raw == "true" || raw == "on" || raw == "1"
+		}
+		if f.IsFK {
+			opts, err := fetchFKOptions(db, f.FKTable, f.FKLabel)
+			if err != nil {
+				log.Printf("admin: %v\n", err)
+			}
+			// Valor atual (edição, ou re-exibição após erro de validação) que
+			// não está entre as opções carregadas — mantém visível em vez de
+			// desaparecer silenciosamente do <select> (registro órfão/excluído).
+			if ff.Value != "" {
+				found := false
+				for _, o := range opts {
+					if o.Value == ff.Value {
+						found = true
+						break
+					}
+				}
+				if !found {
+					opts = append([]fkOption{{Value: ff.Value, Label: ff.Value}}, opts...)
+				}
+			}
+			ff.Options = opts
 		}
 		fields = append(fields, ff)
 	}
@@ -505,7 +530,12 @@ func (s *site) handleNewForm(ctx *router.Context) {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusNotFound)
 		return
 	}
-	renderPage(ctx.Writer, formTpl, s.formData(ctx, rm, false, "", nil, ""))
+	db := s.dbm.Use(rm.Conn)
+	if db == nil {
+		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusServiceUnavailable)
+		return
+	}
+	renderPage(ctx.Writer, formTpl, s.formData(ctx, db, rm, false, "", nil, ""))
 }
 
 func (s *site) handleCreate(ctx *router.Context) {
@@ -520,12 +550,12 @@ func (s *site) handleCreate(ctx *router.Context) {
 		return
 	}
 	if err := parseAdminForm(ctx.Request); err != nil {
-		data := s.formData(ctx, rm, false, "dados de formulário inválidos", nil, "")
+		data := s.formData(ctx, db, rm, false, "dados de formulário inválidos", nil, "")
 		renderPage(ctx.Writer, formTpl, data)
 		return
 	}
 	if err := rm.create(db, ctx.Request); err != nil {
-		data := s.formData(ctx, rm, false, err.Error(), ctx.Request.PostForm, "")
+		data := s.formData(ctx, db, rm, false, err.Error(), ctx.Request.PostForm, "")
 		renderPage(ctx.Writer, formTpl, data)
 		return
 	}
@@ -554,7 +584,7 @@ func (s *site) handleEditForm(ctx *router.Context) {
 	for k, v := range row.Values {
 		prefill.Set(k, v)
 	}
-	renderPage(ctx.Writer, formTpl, s.formData(ctx, rm, true, "", prefill, pk))
+	renderPage(ctx.Writer, formTpl, s.formData(ctx, db, rm, true, "", prefill, pk))
 }
 
 func (s *site) handleUpdate(ctx *router.Context) {
@@ -574,7 +604,7 @@ func (s *site) handleUpdate(ctx *router.Context) {
 		return
 	}
 	if err := rm.update(db, pk, ctx.Request); err != nil {
-		data := s.formData(ctx, rm, true, err.Error(), ctx.Request.PostForm, pk)
+		data := s.formData(ctx, db, rm, true, err.Error(), ctx.Request.PostForm, pk)
 		renderPage(ctx.Writer, formTpl, data)
 		return
 	}

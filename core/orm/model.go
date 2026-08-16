@@ -23,6 +23,7 @@ type Field struct {
 	Size      int    // kyrux:"size:N" — usado por migrations
 	Default   string // kyrux:"default:value" — valor padrão SQL se campo for vazio
 	FK        string // kyrux:"fk:tabela" — REFERENCES tabela(id) na migration
+	FKLabel   string // kyrux:"fklabel:coluna" — coluna usada como rótulo no <select> do admin (padrão: mostra o id)
 }
 
 // ModelMeta contém os metadados pré-computados de um model.
@@ -101,6 +102,8 @@ func buildMeta(t reflect.Type) *ModelMeta {
 				f.Default = strings.TrimPrefix(part, "default:")
 			case strings.HasPrefix(part, "fk:"):
 				f.FK = strings.TrimPrefix(part, "fk:")
+			case strings.HasPrefix(part, "fklabel:"):
+				f.FKLabel = strings.TrimPrefix(part, "fklabel:")
 			}
 		}
 		// autonow implica preenchimento no INSERT quando o campo está zerado.
