@@ -69,7 +69,7 @@ main{flex:1;padding:2rem 2.5rem;overflow-y:auto;min-width:0}
 .readonly-value{font-family:"SF Mono","Fira Code",monospace;font-size:.82rem;color:var(--muted);padding:.5rem 0}
 .form-control{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:.55rem .8rem;border-radius:8px;font-size:.85rem;font-family:inherit}
 .form-control:focus{outline:none;border-color:var(--go-blue)}
-.admin-image-preview{display:block;max-width:220px;max-height:160px;border-radius:8px;border:1px solid var(--border);margin-bottom:.6rem;object-fit:cover}
+.admin-image-preview{display:block;max-width:300px;max-height:300px;border-radius:8px;border:1px solid var(--border);margin-bottom:.6rem;object-fit:contain}
 .form-check{display:flex;align-items:center;gap:.5rem}
 .form-check input{width:16px;height:16px}
 .form-actions{display:flex;gap:.75rem;margin-top:1.5rem;padding-top:1.25rem;border-top:1px solid var(--border)}

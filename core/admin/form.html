@@ -25,8 +25,8 @@
       {{if eq .Widget "password"}}
         <input class="form-control" type="password" id="f-{{.Column}}" name="{{.Column}}" autocomplete="new-password">
       {{else if eq .Widget "file"}}
-        {{if .Value}}<img src="{{.Value}}" alt="" class="admin-image-preview">{{end}}
-        <input class="form-control" type="file" id="f-{{.Column}}" name="{{.Column}}" accept="image/jpeg,image/png,image/gif,image/webp">
+        {{if .Value}}<img id="preview-{{.Column}}" src="{{.Value}}" alt="" class="admin-image-preview">{{end}}
+        <input class="form-control js-image-input" type="file" id="f-{{.Column}}" name="{{.Column}}" accept="image/jpeg,image/png,image/gif,image/webp">
       {{else if eq .Widget "select"}}
         {{$fieldValue := .Value}}
         <select class="form-control" id="f-{{.Column}}" name="{{.Column}}">
