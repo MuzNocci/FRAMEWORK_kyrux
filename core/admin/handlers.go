@@ -240,6 +240,34 @@ func requireStaff(dbm *database.Manager, store *session.Store, basePath string) 
 	}
 }
 
+// ctxUser devolve o *auth.User autenticado na requisição (setado por
+// requireStaff), ou nil se por algum motivo não estiver presente.
+func ctxUser(ctx *router.Context) *auth.User {
+	if v, ok := ctx.Get(userCtxKey); ok {
+		if u, ok2 := v.(*auth.User); ok2 {
+			return u
+		}
+	}
+	return nil
+}
+
+// modelVisibleTo diz se rm deve aparecer/ser acessível pro usuário —
+// models SuperuserOnly exigem IsAdmin, não basta IsStaff.
+func modelVisibleTo(rm *registeredModel, user *auth.User) bool {
+	return !rm.SuperuserOnly || (user != nil && user.IsAdmin)
+}
+
+// modelBySlugFor resolve o model igual a modelBySlug, mas aplicando a
+// restrição SuperuserOnly — pra quem não tem IsAdmin, um model restrito
+// simplesmente não existe (ok=false), igual a um slug desconhecido.
+func modelBySlugFor(ctx *router.Context, slug string) (*registeredModel, bool) {
+	rm, ok := modelBySlug(slug)
+	if !ok || !modelVisibleTo(rm, ctxUser(ctx)) {
+		return nil, false
+	}
+	return rm, true
+}
+
 func (s *site) base(ctx *router.Context, activeSlug, pageTitle string) baseData {
 	b := baseData{
 		AppName:    s.appName,
@@ -250,13 +278,15 @@ func (s *site) base(ctx *router.Context, activeSlug, pageTitle string) baseData 
 		CSRFField:  csrf.FieldName(),
 		CSRFToken:  csrf.TokenFor(ctx),
 	}
+	user := ctxUser(ctx)
 	for _, rm := range modelsOrdered() {
+		if !modelVisibleTo(rm, user) {
+			continue
+		}
 		b.Models = append(b.Models, navItem{Slug: rm.Slug, Label: rm.Label})
 	}
-	if v, ok := ctx.Get(userCtxKey); ok {
-		if u, ok2 := v.(*auth.User); ok2 {
-			b.User = u.Username
-		}
+	if user != nil {
+		b.User = user.Username
 	}
 	if sess, ok := session.FromRequest(ctx.Request, s.store); ok {
 		b.FlashError, b.FlashSuccess = popFlash(sess)
@@ -375,7 +405,7 @@ func buildURL(base string, params map[string]string) string {
 }
 
 func (s *site) handleList(ctx *router.Context) {
-	rm, ok := modelBySlug(ctx.Param("slug"))
+	rm, ok := modelBySlugFor(ctx, ctx.Param("slug"))
 	if !ok {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusNotFound)
 		return
@@ -525,7 +555,7 @@ func (s *site) formData(ctx *router.Context, db *database.DB, rm *registeredMode
 }
 
 func (s *site) handleNewForm(ctx *router.Context) {
-	rm, ok := modelBySlug(ctx.Param("slug"))
+	rm, ok := modelBySlugFor(ctx, ctx.Param("slug"))
 	if !ok {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusNotFound)
 		return
@@ -539,7 +569,7 @@ func (s *site) handleNewForm(ctx *router.Context) {
 }
 
 func (s *site) handleCreate(ctx *router.Context) {
-	rm, ok := modelBySlug(ctx.Param("slug"))
+	rm, ok := modelBySlugFor(ctx, ctx.Param("slug"))
 	if !ok {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusNotFound)
 		return
@@ -564,7 +594,7 @@ func (s *site) handleCreate(ctx *router.Context) {
 }
 
 func (s *site) handleEditForm(ctx *router.Context) {
-	rm, ok := modelBySlug(ctx.Param("slug"))
+	rm, ok := modelBySlugFor(ctx, ctx.Param("slug"))
 	if !ok {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusNotFound)
 		return
@@ -588,7 +618,7 @@ func (s *site) handleEditForm(ctx *router.Context) {
 }
 
 func (s *site) handleUpdate(ctx *router.Context) {
-	rm, ok := modelBySlug(ctx.Param("slug"))
+	rm, ok := modelBySlugFor(ctx, ctx.Param("slug"))
 	if !ok {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusNotFound)
 		return
@@ -613,7 +643,7 @@ func (s *site) handleUpdate(ctx *router.Context) {
 }
 
 func (s *site) handleDelete(ctx *router.Context) {
-	rm, ok := modelBySlug(ctx.Param("slug"))
+	rm, ok := modelBySlugFor(ctx, ctx.Param("slug"))
 	if !ok {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusNotFound)
 		return

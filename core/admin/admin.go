@@ -59,12 +59,13 @@ type adminField struct {
 // registeredModel é a representação type-erased de um Register[T] — as
 // operações de CRUD ficam fechadas sobre T via closures (ver crud.go).
 type registeredModel struct {
-	Slug   string
-	Label  string
-	Conn   string
-	App    string
-	Table  string
-	Fields []adminField
+	Slug          string
+	Label         string
+	Conn          string
+	App           string
+	Table         string
+	Fields        []adminField
+	SuperuserOnly bool
 
 	listCols   []string // Column, na ordem de exibição da listagem
 	searchCols []string // Column, apenas campos string pesquisáveis
@@ -112,6 +113,15 @@ func ListFields(names ...string) Option {
 // Padrão: nenhum — a busca fica desativada até que seja configurada.
 func SearchFields(names ...string) Option {
 	return func(rm *registeredModel) { rm.wantSearch = names }
+}
+
+// SuperuserOnly restringe o model a usuários com IsAdmin: some da navegação
+// e das rotas de CRUD (list/novo/editar/excluir) para quem só tem IsStaff —
+// essas requisições devolvem 404, igual a um model inexistente, sem
+// vazar que o slug existe. Use para dados sensíveis, como a própria
+// tabela de usuários do admin.
+func SuperuserOnly() Option {
+	return func(rm *registeredModel) { rm.SuperuserOnly = true }
 }
 
 var (
