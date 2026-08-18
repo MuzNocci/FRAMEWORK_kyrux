@@ -24,8 +24,13 @@ header .version{font-size:.7rem;color:var(--muted);background:var(--border);padd
 .admin-nav-item{display:block;padding:.55rem 1.25rem;font-size:.83rem;color:var(--muted);border-left:2px solid transparent}
 .admin-nav-item:hover{color:var(--text);background:var(--surface)}
 .admin-nav-item.active{color:var(--go-blue-light);border-left-color:var(--go-blue);background:var(--blue-dim)}
-.admin-nav-panel{font-weight:600;color:var(--text);padding-bottom:.75rem;margin-bottom:.5rem;border-bottom:1px solid var(--border)}
-.admin-nav-sep{padding:1rem 1.25rem .35rem;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+/* admin-nav-topic: os 4 tópicos fixos da navegação (Dashboard/Framework/
+   Aplicações/Logs) — visualmente mais fortes que um item comum (cor sólida,
+   peso 700, borda superior) para funcionar como divisor de seção, não como
+   mais um link. */
+.admin-nav-topic{padding:1.1rem 1.25rem .4rem;font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--go-blue-light);border-top:1px solid var(--border)}
+.admin-nav-topic:first-child{border-top:none;margin-top:0}
+.admin-nav-empty{display:block;padding:.4rem 1.25rem .6rem;font-size:.75rem;color:var(--border)}
 
 main{flex:1;padding:2rem 2.5rem;overflow-y:auto;min-width:0}
 .page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;gap:1rem;flex-wrap:wrap}

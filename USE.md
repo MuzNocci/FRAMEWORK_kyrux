@@ -2120,22 +2120,29 @@ a busca fica desativada para aquele model.
 
 ### Navegação lateral
 
-O topo da barra lateral sempre tem um item **Painel**, que leva para
-`/admin/` (o dashboard com os cards de todos os models). Abaixo dele, os
-models registrados aparecem em duas seções:
+A barra lateral é organizada em quatro tópicos fixos, sempre nesta ordem,
+com um estilo visualmente mais forte (cor, peso, borda) que os links
+comuns — servem de divisor de seção, não de mais um item clicável:
 
-- **Framework** — models declarados em algum pacote do próprio framework
-  (`kyrux/core/...`), como `auth.User`. Útil quando você registra o model de
-  usuário embutido para administrar contas pelo painel:
-  ```go
-  admin.Register[auth.User]("usuarios", "Usuários", admin.SuperuserOnly())
-  ```
-- **Aplicações** — models declarados nos seus próprios apps (`apps/<nome>/models`).
+1. **Dashboard** — item **Painel**, leva para `/admin/` (os cards de todos
+   os models registrados).
+2. **Framework** — models declarados em algum pacote do próprio framework
+   (`kyrux/core/...`), como `auth.User`. Útil quando você registra o model
+   de usuário embutido para administrar contas pelo painel:
+   ```go
+   admin.Register[auth.User]("usuarios", "Usuários", admin.SuperuserOnly())
+   ```
+3. **Aplicações** — models declarados nos seus próprios apps
+   (`apps/<nome>/models`).
+4. **Logs** — item **Histórico**, leva para `/admin/historico/` (ver
+   [Histórico de alterações](#histórico-de-alterações) abaixo).
 
-A separação é automática: o admin identifica a origem de `T` pelo pacote Go
-onde ele foi declarado (`reflect.Type.PkgPath()`), sem exigir nenhuma Option
-adicional em `Register`. Uma seção sem nenhum model registrado simplesmente
-não aparece — não há título vazio.
+A separação entre Framework e Aplicações é automática: o admin identifica a
+origem de `T` pelo pacote Go onde ele foi declarado
+(`reflect.Type.PkgPath()`), sem exigir nenhuma Option adicional em
+`Register`. Diferente das seções anteriores, os quatro tópicos aparecem
+sempre — um tópico sem nenhum model registrado mostra "Nenhum model" em vez
+de sumir, mantendo a navegação previsível.
 
 ### Upload de imagem (`kyrux:"image"`)
 
