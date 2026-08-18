@@ -24,7 +24,13 @@ type Field struct {
 	Size      int    // kyrux:"size:N" — usado por migrations
 	Default   string // kyrux:"default:value" — valor padrão SQL se campo for vazio
 	FK        string // kyrux:"fk:tabela" — REFERENCES tabela(id) na migration
-	FKLabel   string // kyrux:"fklabel:coluna" — coluna usada como rótulo no <select> do admin (padrão: mostra o id)
+	// FKLabel: coluna (ou colunas, separadas por "+") usada como rótulo no
+	// <select> do admin — padrão: mostra o id. Cada parte é "coluna" (do
+	// próprio model referenciado) ou "tabela.coluna" (segue o FK do model
+	// referenciado até essa tabela — precisa haver um campo com
+	// kyrux:"fk:tabela" nele). Ex: kyrux:"fklabel:clientes.nome+titulo"
+	// no FK pra "projetos" mostra "<nome do cliente> — <título>".
+	FKLabel string
 }
 
 // ModelMeta contém os metadados pré-computados de um model.
@@ -122,8 +128,10 @@ func buildMeta(t reflect.Type) *ModelMeta {
 		if f.FK != "" && !validIdent(f.FK) {
 			panic(fmt.Sprintf("orm: model %s: kyrux:\"fk:...\" inválido no campo %s: %q", t.Name(), f.Name, f.FK))
 		}
-		if f.FKLabel != "" && !validIdent(f.FKLabel) {
-			panic(fmt.Sprintf("orm: model %s: kyrux:\"fklabel:...\" inválido no campo %s: %q", t.Name(), f.Name, f.FKLabel))
+		for _, part := range strings.Split(f.FKLabel, "+") {
+			if part != "" && !validIdent(part) {
+				panic(fmt.Sprintf("orm: model %s: kyrux:\"fklabel:...\" inválido no campo %s: %q", t.Name(), f.Name, f.FKLabel))
+			}
 		}
 		if f.Default != "" && !validDefault(f.Default) {
 			panic(fmt.Sprintf("orm: model %s: kyrux:\"default:...\" inválido no campo %s: %q", t.Name(), f.Name, f.Default))
