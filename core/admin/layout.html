@@ -13,16 +13,16 @@
 <header>
   <img src="/kyrux/statics/kyrux_wt.png" class="logo-img" alt="Kyrux">
   <span class="version">v{{.Version}}</span>
-  {{if .User}}
   <div class="header-right">
     <a href="/" class="btn-back">&#8592; Voltar ao site</a>
+    {{if .User}}
     <span>{{.User}}</span>
     <form method="POST" action="{{.BasePath}}logout/" style="display:inline">
       <input type="hidden" name="{{.CSRFField}}" value="{{.CSRFToken}}">
       <button type="submit" class="btn btn-ghost btn-sm">Sair</button>
     </form>
+    {{end}}
   </div>
-  {{end}}
 </header>
 {{if .User}}
 <div class="admin-shell">
