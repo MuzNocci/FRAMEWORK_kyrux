@@ -28,6 +28,7 @@
 <div class="admin-shell">
   <nav class="admin-sidebar">
     <a href="{{.BasePath}}" class="admin-nav-item admin-nav-panel{{if eq "" .ActiveSlug}} active{{end}}">Painel</a>
+    <a href="{{.BasePath}}historico/" class="admin-nav-item{{if eq "historico" .ActiveSlug}} active{{end}}">Histórico</a>
     {{if .FrameworkModels}}
     <div class="admin-nav-sep">Framework</div>
     {{range .FrameworkModels}}

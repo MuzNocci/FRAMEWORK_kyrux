@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-//go:embed layout.html login.html dashboard.html list.html form.html
+//go:embed layout.html login.html dashboard.html list.html form.html history.html
 var tplFS embed.FS
 
 //go:embed admin.css
@@ -34,6 +34,7 @@ var (
 	dashboardTpl = mustPage("dashboard.html")
 	listTpl      = mustPage("list.html")
 	formTpl      = mustPage("form.html")
+	historyTpl   = mustPage("history.html")
 )
 
 // bufPool evita, a cada render, começar de um bytes.Buffer com capacidade

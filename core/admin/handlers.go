@@ -186,6 +186,7 @@ func Mount(r *router.Router, dbm *database.Manager, store *session.Store, basePa
 	guard := requireStaff(dbm, store, basePath)
 	r.Handle("POST "+basePath+"logout/", guard(s.handleLogout))
 	r.Handle("GET "+basePath, guard(s.handleDashboard))
+	r.Handle("GET "+basePath+"historico/", guard(s.handleHistory))
 	r.Handle("GET "+basePath+"<slug:str>/", guard(s.handleList))
 	r.Handle("GET "+basePath+"<slug:str>/novo/", guard(s.handleNewForm))
 	r.Handle("POST "+basePath+"<slug:str>/novo/", guard(s.handleCreate))
@@ -599,6 +600,7 @@ func (s *site) handleBulkAction(ctx *router.Context) {
 		ctx.Redirect(listPath, http.StatusFound)
 		return
 	}
+	logBulkHistory(db, rm, actorFrom(ctx), action, rawIDs)
 	flashOnSession(s.store, ctx.Request, "success", fmt.Sprintf("%d registro(s) processado(s).", len(pks)))
 	ctx.Redirect(listPath, http.StatusFound)
 }
@@ -703,7 +705,7 @@ func (s *site) handleCreate(ctx *router.Context) {
 		renderPage(ctx.Writer, formTpl, data)
 		return
 	}
-	if err := rm.create(db, ctx.Request); err != nil {
+	if err := rm.create(db, ctx.Request, actorFrom(ctx)); err != nil {
 		data := s.formData(ctx, db, rm, false, err.Error(), ctx.Request.PostForm, "")
 		renderPage(ctx.Writer, formTpl, data)
 		return
@@ -752,7 +754,7 @@ func (s *site) handleUpdate(ctx *router.Context) {
 		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusBadRequest)
 		return
 	}
-	if err := rm.update(db, pk, ctx.Request); err != nil {
+	if err := rm.update(db, pk, ctx.Request, actorFrom(ctx)); err != nil {
 		data := s.formData(ctx, db, rm, true, err.Error(), ctx.Request.PostForm, pk)
 		renderPage(ctx.Writer, formTpl, data)
 		return
@@ -773,7 +775,7 @@ func (s *site) handleDelete(ctx *router.Context) {
 		return
 	}
 	pk := ctx.Param("pk")
-	if err := rm.delete(db, pk); err != nil {
+	if err := rm.delete(db, pk, actorFrom(ctx)); err != nil {
 		http.Error(ctx.Writer, "admin: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

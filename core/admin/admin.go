@@ -33,7 +33,7 @@ import (
 var reSlug = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // reservedSlugs são os sub-caminhos fixos de /admin/ — um model não pode usá-los.
-var reservedSlugs = map[string]bool{"login": true, "logout": true}
+var reservedSlugs = map[string]bool{"login": true, "logout": true, "historico": true}
 
 // frameworkPkgPrefix identifica um model como pertencente ao próprio
 // framework (ex: auth.User, em "kyrux/core/security/auth") em vez de a um
@@ -413,6 +413,12 @@ func Count() int {
 // falhar; os erros são agregados via errors.Join.
 func EnsureAllTables(db *database.DB) error {
 	var errs []error
+	// HistoryLog não é um model registrado (é somente leitura, sem
+	// admin.Register) — criada aqui incondicionalmente, mesmo padrão de
+	// auth.User em bootstrap.go.
+	if err := orm.EnsureSQLiteTable[HistoryLog](db); err != nil {
+		errs = append(errs, fmt.Errorf("admin: histórico: %w", err))
+	}
 	for _, rm := range modelsOrdered() {
 		if err := rm.ensureTable(db); err != nil {
 			errs = append(errs, fmt.Errorf("admin: model %q: %w", rm.Label, err))

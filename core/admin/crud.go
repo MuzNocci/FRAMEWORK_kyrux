@@ -24,11 +24,14 @@ type adminRow struct {
 // (handlers.go), nunca pelas closures — mantém o pacote sem acoplamento a
 // como a conexão é obtida (Manager, DB direto, etc.).
 type (
-	listFunc        func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool, filters []filterCond) (rows []adminRow, hasNext bool, err error)
-	getFunc         func(db *database.DB, pk string) (adminRow, error)
-	createFunc      func(db *database.DB, r *http.Request) error
-	updateFunc      func(db *database.DB, pk string, r *http.Request) error
-	deleteFunc      func(db *database.DB, pk string) error
+	listFunc func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool, filters []filterCond) (rows []adminRow, hasNext bool, err error)
+	getFunc  func(db *database.DB, pk string) (adminRow, error)
+	// create/update/delete recebem actor (quem está fazendo a ação) para
+	// registrar em HistoryLog — resolvido em handlers.go a partir de
+	// ctxUser(ctx) e passado adiante, nunca lido pelas closures diretamente.
+	createFunc      func(db *database.DB, r *http.Request, actor historyActor) error
+	updateFunc      func(db *database.DB, pk string, r *http.Request, actor historyActor) error
+	deleteFunc      func(db *database.DB, pk string, actor historyActor) error
 	ensureTableFunc func(db *database.DB) error
 	// deleteManyFunc é um alias de tipo (não um tipo novo) para BulkActionFunc
 	// (definido em admin.go): a ação embutida "delete" e as registradas via
@@ -97,7 +100,7 @@ func registerCRUD[T any](rm *registeredModel) {
 		return rowFromStructForm(reflect.ValueOf(item).Elem(), rm.Fields, rm.pkColumn), nil
 	}
 
-	rm.create = func(db *database.DB, r *http.Request) error {
+	rm.create = func(db *database.DB, r *http.Request, actor historyActor) error {
 		var obj T
 		v := reflect.ValueOf(&obj).Elem()
 		form := r.PostForm
@@ -123,10 +126,17 @@ func registerCRUD[T any](rm *registeredModel) {
 				return fmt.Errorf("campo %q: %w", f.Label, err)
 			}
 		}
-		return orm.Create(db, &obj)
+		if err := orm.Create(db, &obj); err != nil {
+			return err
+		}
+		// PK só existe depois do INSERT (autoincrement) — v reflete &obj, já
+		// atualizado por orm.Create.
+		pk := formatDisplayValue(v.Field(pkFieldOf(rm.Fields).GoIndex), adminField{})
+		logHistory(db, rm, actor, "create", pk, fieldValuesMap(v, rm.Fields))
+		return nil
 	}
 
-	rm.update = func(db *database.DB, pk string, r *http.Request) error {
+	rm.update = func(db *database.DB, pk string, r *http.Request, actor historyActor) error {
 		pkArg, err := parsePKArg(pk, rm.pkKind)
 		if err != nil {
 			return err
@@ -163,15 +173,23 @@ func registerCRUD[T any](rm *registeredModel) {
 		if len(values) == 0 {
 			return nil
 		}
-		return orm.FromDB[T](db).Where(rm.pkColumn+" = ?", pkArg).Update(values)
+		if err := orm.FromDB[T](db).Where(rm.pkColumn+" = ?", pkArg).Update(values); err != nil {
+			return err
+		}
+		logHistory(db, rm, actor, "update", pk, values)
+		return nil
 	}
 
-	rm.delete = func(db *database.DB, pk string) error {
+	rm.delete = func(db *database.DB, pk string, actor historyActor) error {
 		pkArg, err := parsePKArg(pk, rm.pkKind)
 		if err != nil {
 			return err
 		}
-		return orm.FromDB[T](db).Where(rm.pkColumn+" = ?", pkArg).Delete()
+		if err := orm.FromDB[T](db).Where(rm.pkColumn+" = ?", pkArg).Delete(); err != nil {
+			return err
+		}
+		logHistory(db, rm, actor, "delete", pk, nil)
+		return nil
 	}
 
 	// deleteMany é a ação em lote embutida ("delete") — um único DELETE com
@@ -183,6 +201,17 @@ func registerCRUD[T any](rm *registeredModel) {
 	rm.ensureTable = func(db *database.DB) error {
 		return orm.EnsureSQLiteTable[T](db)
 	}
+}
+
+// pkFieldOf devolve o adminField da PK — todo model registrado tem
+// exatamente um (Register exige kyrux:"pk" e panica se faltar).
+func pkFieldOf(fields []adminField) adminField {
+	for _, f := range fields {
+		if f.IsPK {
+			return f
+		}
+	}
+	return adminField{}
 }
 
 // applySearch adiciona um grupo OR (busca textual) sobre as colunas

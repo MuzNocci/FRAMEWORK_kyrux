@@ -17,6 +17,18 @@ import (
 
 // ── makemigrations ────────────────────────────────────────────────────────────
 
+// excludeTestFiles remove *_test.go da lista — arquivo de teste nunca é
+// origem de model real, mesmo que declare um struct kyrux:"pk" (fixture).
+func excludeTestFiles(paths []string) []string {
+	out := paths[:0]
+	for _, p := range paths {
+		if !strings.HasSuffix(p, "_test.go") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func runMakeMigrations() error {
 	_ = environment.Load(".env")
 	driver := environment.GetOr("DB_DRIVER", "postgres")
@@ -25,11 +37,23 @@ func runMakeMigrations() error {
 	if err != nil {
 		return fmt.Errorf("listar models de apps: %w", err)
 	}
-	coreFiles, err := filepath.Glob(filepath.Join("core", "security", "auth", "*.go"))
+	authFiles, err := filepath.Glob(filepath.Join("core", "security", "auth", "*.go"))
 	if err != nil {
 		return fmt.Errorf("listar models de core/security/auth: %w", err)
 	}
-	files := append(appFiles, coreFiles...)
+	// core/admin também é escaneado — o histórico de alterações
+	// (admin.HistoryLog) é um model do próprio framework, igual a auth.User:
+	// precisa de tabela em qualquer banco real, sem o dev declarar nada.
+	adminFiles, err := filepath.Glob(filepath.Join("core", "admin", "*.go"))
+	if err != nil {
+		return fmt.Errorf("listar models de core/admin: %w", err)
+	}
+	files := append(appFiles, authFiles...)
+	files = append(files, adminFiles...)
+	// *_test.go nunca é model de verdade — sem isso, structs kyrux:"pk" de
+	// fixtures de teste (definidas direto em core/admin, core/security/auth)
+	// virariam tabela na migration gerada.
+	files = excludeTestFiles(files)
 
 	schema, err := migSchemaInDir("database/migrations")
 	if err != nil {

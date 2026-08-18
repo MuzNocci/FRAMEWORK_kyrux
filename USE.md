@@ -239,7 +239,7 @@ Remove a pasta e desfaz o registro. Pede confirmação antes.
 go run main.go makemigrations
 ```
 
-Lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go` e em `core/security/auth/*.go`, detecta tabelas ainda não migradas e gera um arquivo `database/migrations/NNNN_auto.sql`. **Revise o arquivo antes de aplicar.**
+Lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go`, `core/security/auth/*.go` e `core/admin/*.go` (ignorando `*_test.go`), detecta tabelas ainda não migradas e gera um arquivo `database/migrations/NNNN_auto.sql`. **Revise o arquivo antes de aplicar.**
 
 ### Aplicar migrations
 
@@ -979,7 +979,7 @@ A seção **up** é aplicada pelo `migrate`. A seção **down** é executada pel
 
 ### Gerar migrations automaticamente (`makemigrations`)
 
-O comando lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go` e `core/security/auth/*.go`, compara com o schema das migrations existentes e gera o SQL com as seções up e down automaticamente:
+O comando lê todos os structs com `kyrux:"pk"` em `apps/*/models/*.go`, `core/security/auth/*.go` e `core/admin/*.go` (ignorando `*_test.go` — fixture de teste nunca é model de verdade), compara com o schema das migrations existentes e gera o SQL com as seções up e down automaticamente:
 
 - **Tabela nova** → `CREATE TABLE` completo (+ índices unique/fk).
 - **Campo novo em model existente** → `ALTER TABLE ... ADD COLUMN` (autodetectado).
@@ -2272,8 +2272,8 @@ ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 | FK como `<select>` (só ids existentes) | ✅ — automático em qualquer `kyrux:"fk:tabela"`; rótulo via `kyrux:"fklabel:coluna"` |
 | Filtros avançados na listagem | ✅ — opt-in via `FilterFields` |
 | Ações em lote | ✅ — excluir selecionados embutido; extensível via `BulkAction` |
+| Histórico de alterações | ✅ — automático em todo model registrado, sem Option |
 | Inlines (editar relação dentro do model pai) | ❌ |
-| Histórico de alterações | ❌ |
 
 Inlines ficam de fora por design nesta primeira versão — o objetivo é um
 CRUD sólido e seguro sobre um model por vez, não replicar toda a superfície
@@ -2369,6 +2369,43 @@ admin.Register[models.Produto]("produtos", "Produtos",
 - No navegador, o botão "Aplicar" pede confirmação antes de submeter —
   igual à exclusão individual, para evitar clique acidental numa ação
   irreversível.
+
+### Histórico de alterações
+
+Toda ação feita através do admin — criar, editar, excluir (individual ou em
+lote, embutida ou via `BulkAction`) — gera automaticamente uma entrada de
+auditoria: quem fez, quando, em qual model/registro. Não é opt-in nem
+precisa de nenhuma Option — vale para todo model registrado via
+`admin.Register`, desde a primeira versão que inclui este recurso.
+
+Acesse em **Histórico**, fixo no topo da barra lateral (`/admin/historico/`),
+com filtro por model. Cada entrada mostra:
+
+| Coluna | Conteúdo |
+|---|---|
+| Data | Quando a ação aconteceu |
+| Model | O rótulo do model (`admin.Register("slug", "Rótulo", ...)`) |
+| Registro | O valor da PK afetada |
+| Ação | `create`, `update`, `delete`, ou o `name` de uma `BulkAction` |
+| Alterações | Para `create`/`update`: os campos submetidos (`campo: valor`). Vazio para `delete` e ações em lote — nenhuma dessas grava um diff de valores nesta versão |
+| Usuário | Quem estava autenticado quando a ação rodou |
+
+- **Campos sensíveis nunca aparecem em Alterações**: `kyrux:"hash"` e
+  `kyrux:"encrypt"` são sempre gravados como `***`, mesma proteção que já
+  vale pro resto do admin — o histórico é uma cópia secundária dos dados que
+  fica indefinidamente, não pode ser um jeito indireto de vazar senha ou o
+  plaintext de um campo cifrado.
+- **Modelos `SuperuserOnly()` também ficam escondidos no histórico** para
+  quem só tem `IsStaff` — a mesma restrição que já vale pro model em si.
+- **Cada entrada mora na mesma conexão do registro que ela descreve** (a
+  conexão do model — `admin.Conn("nome")` — não sempre `"default"`). A
+  página **Histórico** sem filtro mostra a conexão `"default"`; para ver o
+  histórico de um model configurado noutra conexão nomeada, filtre por ele
+  explicitamente (o filtro resolve a conexão certa automaticamente).
+- A tabela (`history_logs`) é criada automaticamente junto com a de
+  `auth.User` — no SQLite de fallback (development, sem banco configurado)
+  e via `makemigrations`, que agora também escaneia `core/admin` (mesmo
+  tratamento já dado a `core/security/auth`).
 
 > `admin.Mount`, `admin.EnsureAllTables` e `admin.Count` são exportadas mas de
 > uso interno — `bootstrap.Init()` já as chama sozinho na ordem certa (depois

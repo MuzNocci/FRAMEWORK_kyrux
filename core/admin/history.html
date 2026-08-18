@@ -1,0 +1,58 @@
+{{define "content"}}
+<div class="page-head">
+  <h1>Histórico</h1>
+</div>
+
+{{if .Models}}
+<form method="GET" class="toolbar">
+  <div class="filter-field">
+    <label>Model</label>
+    <select name="model">
+      <option value="">Todos</option>
+      {{range .Models}}<option value="{{.Slug}}"{{if eq .Slug $.ModelFilter}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+  </div>
+  <button type="submit" class="btn btn-ghost btn-sm">Filtrar</button>
+  {{if .ModelFilter}}<a href="{{.ClearURL}}" class="btn btn-ghost btn-sm">Limpar</a>{{end}}
+</form>
+{{end}}
+
+<div class="panel">
+{{if .Entries}}
+<div style="overflow-x:auto">
+<table class="table">
+<thead><tr>
+  <th>Data</th>
+  <th>Model</th>
+  <th>Registro</th>
+  <th>Ação</th>
+  <th>Alterações</th>
+  <th>Usuário</th>
+</tr></thead>
+<tbody>
+{{range .Entries}}
+<tr>
+  <td>{{.CreatedAt}}</td>
+  <td>{{.Model}}</td>
+  <td>{{.RecordPK}}</td>
+  <td>{{.Action}}</td>
+  <td>{{if .Changes}}{{.Changes}}{{else}}&mdash;{{end}}</td>
+  <td>{{if .Username}}{{.Username}}{{else}}&mdash;{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+<div class="pagination">
+  <span>Página {{.Page}}</span>
+  <div>
+    {{if .HasPrev}}<a href="{{.PrevURL}}">&#8592; Anterior</a>{{else}}<span class="disabled">&#8592; Anterior</span>{{end}}
+    &nbsp;&middot;&nbsp;
+    {{if .HasNext}}<a href="{{.NextURL}}">Próxima &#8594;</a>{{else}}<span class="disabled">Próxima &#8594;</span>{{end}}
+  </div>
+</div>
+{{else}}
+<div class="empty">Nenhuma entrada de histórico ainda.</div>
+{{end}}
+</div>
+{{end}}
