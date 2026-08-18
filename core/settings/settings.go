@@ -149,7 +149,7 @@ func Load() *Settings {
 		InstalledApps: InstalledApps,
 		App: AppSettings{
 			Name:    "KYRUX",
-			Version: "0.7.51 (Beta)",
+			Version: "0.7.52 (Beta)",
 			Env:     env,
 			Debug:   env == "development",
 			URL:     strings.TrimSuffix(environment.Get("APP_URL"), "/"),
