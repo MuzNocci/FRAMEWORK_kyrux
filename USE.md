@@ -476,7 +476,7 @@ O Kyrux usa herança de templates no estilo Django. Os templates ficam em `apps/
 | `{{ Addr }}`     | Framework       | `0.0.0.0:8000`             |
 | `{{ GoVersion }}`| Framework       | `go1.22.3`                 |
 | `{{ url "nome" }}`| Framework      | Resolve a URL pelo nome    |
-| `{{ statics "app" "path/arquivo.css" }}`| Framework | Resolve URL de arquivo estático |
+| `{{ statics "path/arquivo.css" }}` / `{{ statics "app" "path/arquivo.css" }}` | Framework | Resolve URL de arquivo estático (global ou por app) |
 | `{{ csrf_token }}`| Framework      | Input hidden de segurança  |
 
 ### Herança de templates
@@ -582,16 +582,26 @@ Uso no template:
 
 ### Arquivos estáticos
 
-Os arquivos ficam em `apps/<nome>/statics/` e são servidos automaticamente em `/statics/`. Use a função `statics` no template para referenciar arquivos sem expor o nome do app na URL final.
+Existem dois tipos de estáticos, ambos servidos automaticamente em `/statics/` pelo mesmo handler:
+
+- **Por app**: ficam em `apps/<nome>/statics/`.
+- **Globais**: ficam em `statics/` na raiz do projeto, compartilhados entre todos os apps.
+
+Use a função `statics` no template para gerar a URL — todos os argumentos passados são concatenados (com `/`) para formar o caminho.
 
 **Sintaxe:**
 ```html
-{{ statics "nome-do-app" "caminho/arquivo.ext" }}
+{{ statics "caminho/arquivo.ext" }}                <!-- estático global -->
+{{ statics "nome-do-app" "caminho/arquivo.ext" }}  <!-- estático do app -->
 ```
 
-O primeiro argumento é o nome do app (apenas para clareza do desenvolvedor — não aparece na URL gerada). Os argumentos seguintes são concatenados para formar o caminho do arquivo.
+**Como a resolução funciona:** para cada requisição em `/statics/<caminho>`, o framework tenta, nessa ordem:
+1. `statics/<caminho>` na raiz do projeto.
+2. Se não encontrar, usa o primeiro segmento de `<caminho>` como nome de app e busca em `apps/<app>/statics/<resto>`.
 
-**Exemplos:**
+Por isso, ao chamar `{{ statics "blog" "styles/base.css" }}`, a URL gerada inclui o nome do app (`/statics/blog/styles/base.css`) — isso é necessário para o fallback por app funcionar. Já `{{ statics "styles/base.css" }}` (sem nome de app) gera `/statics/styles/base.css`, resolvido direto na pasta raiz.
+
+**Exemplos — estático por app:**
 ```html
 <!-- CSS e JS -->
 <link rel="stylesheet" href="{{ statics "blog" "styles/base.css" }}">
@@ -610,10 +620,10 @@ O primeiro argumento é o nome do app (apenas para clareza do desenvolvedor — 
 <img src="{{ statics "blog" "uploads/" .Category "/" .FileName }}" alt="Arquivo">
 ```
 
-**URL gerada** (o nome do app nunca aparece):
+**URLs geradas:**
 ```
-/statics/styles/base.css
-/statics/uploads/avatar.jpg
+/statics/blog/styles/base.css
+/statics/blog/uploads/avatar.jpg
 ```
 
 **Estrutura de pastas por app:**
@@ -626,12 +636,23 @@ apps/
         └── images/       ← Imagens e outros assets
 ```
 
-**Estáticos globais** (compartilhados entre todos os apps):
+**Estáticos globais** (compartilhados entre todos os apps, resolvidos com prioridade sobre os estáticos por app):
 ```
-statics/           ← raiz do projeto
-└── styles/
-└── scripts/
+statics/              ← raiz do projeto
+├── styles/
+├── scripts/
+└── images/
 ```
+
+**Exemplos — estático global:**
+```html
+<link rel="stylesheet" href="{{ statics "styles/global.css" }}">
+<!-- gera /statics/styles/global.css, resolvido em statics/styles/global.css -->
+
+<img src="{{ statics "images/logo.png" }}" alt="Logo">
+```
+
+Use estáticos globais para arquivos compartilhados entre apps (ex: reset CSS, framework JS, fontes, ícones do site); use estáticos por app para arquivos exclusivos de um app.
 
 ---
 
