@@ -35,6 +35,17 @@ var reSlug = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // reservedSlugs são os sub-caminhos fixos de /admin/ — um model não pode usá-los.
 var reservedSlugs = map[string]bool{"login": true, "logout": true}
 
+// frameworkPkgPrefix identifica um model como pertencente ao próprio
+// framework (ex: auth.User, em "kyrux/core/security/auth") em vez de a um
+// app do usuário — usado para separar "Framework" de "Aplicações" na
+// navegação do admin. Detectado automaticamente a partir do pacote onde T
+// foi declarado: nenhuma Option adicional é exigida do desenvolvedor.
+const frameworkPkgPrefix = "kyrux/core/"
+
+func isFrameworkModel(pkgPath string) bool {
+	return strings.HasPrefix(pkgPath, frameworkPkgPrefix)
+}
+
 var timeType = reflect.TypeOf(time.Time{})
 
 // adminField descreve um campo do model para fins de exibição/edição no admin.
@@ -66,6 +77,7 @@ type registeredModel struct {
 	Table         string
 	Fields        []adminField
 	SuperuserOnly bool
+	Framework     bool // T pertence ao próprio framework (ex: auth.User) — ver isFrameworkModel
 
 	listCols   []string // Column, na ordem de exibição da listagem
 	searchCols []string // Column, apenas campos string pesquisáveis
@@ -152,12 +164,13 @@ func Register[T any](slug, label string, opts ...Option) {
 	structType := reflect.TypeOf(zero)
 
 	rm := &registeredModel{
-		Slug:     slug,
-		Label:    label,
-		Conn:     "default",
-		Table:    meta.Table,
-		pkColumn: meta.PKField.Column,
-		pkKind:   structType.Field(meta.PKField.GoIndex).Type.Kind(),
+		Slug:      slug,
+		Label:     label,
+		Conn:      "default",
+		Table:     meta.Table,
+		pkColumn:  meta.PKField.Column,
+		pkKind:    structType.Field(meta.PKField.GoIndex).Type.Kind(),
+		Framework: isFrameworkModel(structType.PkgPath()),
 	}
 	for _, o := range opts {
 		o(rm)

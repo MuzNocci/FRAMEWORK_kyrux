@@ -27,9 +27,18 @@
 {{if .User}}
 <div class="admin-shell">
   <nav class="admin-sidebar">
-    <div class="admin-nav-sep">Models</div>
-    {{range .Models}}
+    <a href="{{.BasePath}}" class="admin-nav-item admin-nav-panel{{if eq "" .ActiveSlug}} active{{end}}">Painel</a>
+    {{if .FrameworkModels}}
+    <div class="admin-nav-sep">Framework</div>
+    {{range .FrameworkModels}}
     <a href="{{$.BasePath}}{{.Slug}}/" class="admin-nav-item{{if eq .Slug $.ActiveSlug}} active{{end}}">{{.Label}}</a>
+    {{end}}
+    {{end}}
+    {{if .AppModels}}
+    <div class="admin-nav-sep">Aplicações</div>
+    {{range .AppModels}}
+    <a href="{{$.BasePath}}{{.Slug}}/" class="admin-nav-item{{if eq .Slug $.ActiveSlug}} active{{end}}">{{.Label}}</a>
+    {{end}}
     {{end}}
   </nav>
   <main>

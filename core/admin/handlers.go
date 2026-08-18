@@ -55,17 +55,24 @@ type navItem struct{ Slug, Label string }
 
 // baseData carrega os dados comuns a todas as páginas (header, sidebar, CSRF).
 type baseData struct {
-	AppName      string
-	Version      string
-	PageTitle    string
-	BasePath     string
-	ActiveSlug   string
-	Models       []navItem
-	User         string
-	CSRFField    string
-	CSRFToken    string
-	FlashError   string
-	FlashSuccess string
+	AppName    string
+	Version    string
+	PageTitle  string
+	BasePath   string
+	ActiveSlug string
+	// Models é a lista completa (framework + apps), na ordem de registro —
+	// usada pelo dashboard, que não precisa da separação por origem.
+	Models []navItem
+	// FrameworkModels/AppModels são a mesma lista de Models, particionada
+	// pela origem do model (ver registeredModel.Framework) — usada pela
+	// navegação lateral, que exibe as duas seções separadamente.
+	FrameworkModels []navItem
+	AppModels       []navItem
+	User            string
+	CSRFField       string
+	CSRFToken       string
+	FlashError      string
+	FlashSuccess    string
 }
 
 type columnView struct {
@@ -283,7 +290,13 @@ func (s *site) base(ctx *router.Context, activeSlug, pageTitle string) baseData 
 		if !modelVisibleTo(rm, user) {
 			continue
 		}
-		b.Models = append(b.Models, navItem{Slug: rm.Slug, Label: rm.Label})
+		item := navItem{Slug: rm.Slug, Label: rm.Label}
+		b.Models = append(b.Models, item)
+		if rm.Framework {
+			b.FrameworkModels = append(b.FrameworkModels, item)
+		} else {
+			b.AppModels = append(b.AppModels, item)
+		}
 	}
 	if user != nil {
 		b.User = user.Username

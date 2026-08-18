@@ -24,6 +24,7 @@ header .version{font-size:.7rem;color:var(--muted);background:var(--border);padd
 .admin-nav-item{display:block;padding:.55rem 1.25rem;font-size:.83rem;color:var(--muted);border-left:2px solid transparent}
 .admin-nav-item:hover{color:var(--text);background:var(--surface)}
 .admin-nav-item.active{color:var(--go-blue-light);border-left-color:var(--go-blue);background:var(--blue-dim)}
+.admin-nav-panel{font-weight:600;color:var(--text);padding-bottom:.75rem;margin-bottom:.5rem;border-bottom:1px solid var(--border)}
 .admin-nav-sep{padding:1rem 1.25rem .35rem;font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 
 main{flex:1;padding:2rem 2.5rem;overflow-y:auto;min-width:0}

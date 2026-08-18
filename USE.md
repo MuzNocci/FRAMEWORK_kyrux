@@ -2118,6 +2118,25 @@ func Register(r *router.Router, fw *bootstrap.Framework) {
 marcados `kyrux:"hash"` (nunca exibidos, em lugar nenhum). Sem `SearchFields`,
 a busca fica desativada para aquele model.
 
+### Navegação lateral
+
+O topo da barra lateral sempre tem um item **Painel**, que leva para
+`/admin/` (o dashboard com os cards de todos os models). Abaixo dele, os
+models registrados aparecem em duas seções:
+
+- **Framework** — models declarados em algum pacote do próprio framework
+  (`kyrux/core/...`), como `auth.User`. Útil quando você registra o model de
+  usuário embutido para administrar contas pelo painel:
+  ```go
+  admin.Register[auth.User]("usuarios", "Usuários", admin.SuperuserOnly())
+  ```
+- **Aplicações** — models declarados nos seus próprios apps (`apps/<nome>/models`).
+
+A separação é automática: o admin identifica a origem de `T` pelo pacote Go
+onde ele foi declarado (`reflect.Type.PkgPath()`), sem exigir nenhuma Option
+adicional em `Register`. Uma seção sem nenhum model registrado simplesmente
+não aparece — não há título vazio.
+
 ### Upload de imagem (`kyrux:"image"`)
 
 Um campo `string` marcado `kyrux:"image"` vira um input de upload no
