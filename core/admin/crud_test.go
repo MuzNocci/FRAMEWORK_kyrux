@@ -5,6 +5,11 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"kyrux/core/database"
+	"kyrux/core/orm"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestParsePKArg(t *testing.T) {
@@ -150,6 +155,39 @@ func TestBuildURLSemParametrosNaoAdicionaInterrogacao(t *testing.T) {
 	got := buildURL("/admin/produtos/", map[string]string{"q": "", "dir": ""})
 	if got != "/admin/produtos/" {
 		t.Errorf("sem params, URL não deveria ter '?': %q", got)
+	}
+}
+
+type searchTestProduto struct {
+	ID   int64  `kyrux:"pk"`
+	Nome string `kyrux:"size:100"`
+}
+
+// TestApplySearchNaoDiferenciaMaiusculaMinuscula garante que a busca do
+// admin encontra o registro independente da caixa usada no termo ou no
+// dado salvo — LIKE puro é case-sensitive no Postgres (não no SQLite, daí
+// não bastar rodar só localmente contra o fallback de dev).
+func TestApplySearchNaoDiferenciaMaiusculaMinuscula(t *testing.T) {
+	db, err := database.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("abrir sqlite: %v", err)
+	}
+	defer db.Close()
+	if err := orm.EnsureSQLiteTable[searchTestProduto](db); err != nil {
+		t.Fatalf("ensure table: %v", err)
+	}
+	orm.Create(db, &searchTestProduto{Nome: "Notebook Dell"})
+	orm.Create(db, &searchTestProduto{Nome: "sofá retrátil"})
+
+	cases := []string{"notebook", "NOTEBOOK", "Notebook", "SOFÁ", "sofá"}
+	for _, term := range cases {
+		got, err := applySearch(orm.FromDB[searchTestProduto](db), []string{"nome"}, term).All()
+		if err != nil {
+			t.Fatalf("busca %q: %v", term, err)
+		}
+		if len(got) != 1 {
+			t.Errorf("busca %q: esperava 1 resultado, recebeu %d", term, len(got))
+		}
 	}
 }
 

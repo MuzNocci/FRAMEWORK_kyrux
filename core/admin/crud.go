@@ -215,13 +215,16 @@ func pkFieldOf(fields []adminField) adminField {
 }
 
 // applySearch adiciona um grupo OR (busca textual) sobre as colunas
-// pesquisáveis, como uma única condição AND-composable.
+// pesquisáveis, como uma única condição AND-composable. LOWER() dos dois
+// lados (coluna e termo) em vez de ILIKE — ILIKE é específico do Postgres
+// e quebraria no fallback SQLite de desenvolvimento; LOWER()+LIKE funciona
+// nos dois.
 func applySearch[T any](q *orm.Query[T], cols []string, search string) *orm.Query[T] {
 	conds := make([]string, len(cols))
 	args := make([]any, len(cols))
-	like := "%" + search + "%"
+	like := "%" + strings.ToLower(search) + "%"
 	for i, c := range cols {
-		conds[i] = c + " LIKE ?"
+		conds[i] = "LOWER(" + c + ") LIKE ?"
 		args[i] = like
 	}
 	return q.Where("("+strings.Join(conds, " OR ")+")", args...)
