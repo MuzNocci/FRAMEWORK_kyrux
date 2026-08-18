@@ -55,8 +55,9 @@ type adminField struct {
 	Column    string
 	Label     string // nome humanizado, ex: "Criado Em"
 	GoIndex   int
-	Widget    string // "text" | "number" | "number-float" | "checkbox" | "datetime" | "password" | "file" | "select"
-	Optional  bool   // campo é ponteiro (*T) — em branco vira nil/NULL
+	Kind      reflect.Kind // tipo Go real do campo (ponteiro já desembrulhado) — usado para converter valores de filtro (FilterFields) para o tipo certo da coluna
+	Widget    string       // "text" | "number" | "number-float" | "checkbox" | "datetime" | "password" | "file" | "select"
+	Optional  bool         // campo é ponteiro (*T) — em branco vira nil/NULL
 	IsPK      bool
 	IsHash    bool
 	IsEncrypt bool
@@ -79,8 +80,10 @@ type registeredModel struct {
 	SuperuserOnly bool
 	Framework     bool // T pertence ao próprio framework (ex: auth.User) — ver isFrameworkModel
 
-	listCols   []string // Column, na ordem de exibição da listagem
-	searchCols []string // Column, apenas campos string pesquisáveis
+	listCols     []string     // Column, na ordem de exibição da listagem
+	searchCols   []string     // Column, apenas campos string pesquisáveis
+	filterFields []adminField // campos filtráveis na listagem (FilterFields)
+	bulkActions  []bulkAction // "Excluir selecionados" (builtin) + registradas via BulkAction
 
 	pkColumn string
 	pkKind   reflect.Kind
@@ -90,12 +93,28 @@ type registeredModel struct {
 	create      createFunc
 	update      updateFunc
 	delete      deleteFunc
+	deleteMany  deleteManyFunc
 	ensureTable ensureTableFunc
 
 	// nomes de campo Go pendentes de resolução (setados pelas Options,
 	// resolvidos após Fields ser construído).
 	wantList   []string
 	wantSearch []string
+	wantFilter []string
+}
+
+// BulkActionFunc executa uma ação em lote sobre os registros cujos PKs estão
+// em pks — cada valor já convertido para o tipo Go real da coluna de PK
+// (mesma conversão usada por uma exclusão/edição individual), pronto para
+// WhereIn("id", pks...).
+type BulkActionFunc func(db *database.DB, pks []any) error
+
+// bulkAction é uma ação em lote registrada — "delete" (builtin, sempre
+// presente) ou uma registrada via BulkAction.
+type bulkAction struct {
+	Name  string // value do <option> — "delete" é reservado para o builtin
+	Label string
+	Fn    BulkActionFunc
 }
 
 // Option configura o registro de um model no admin.
@@ -125,6 +144,38 @@ func ListFields(names ...string) Option {
 // Padrão: nenhum — a busca fica desativada até que seja configurada.
 func SearchFields(names ...string) Option {
 	return func(rm *registeredModel) { rm.wantSearch = names }
+}
+
+// FilterFields define quais campos ganham um filtro na listagem, na ordem
+// informada. Os nomes são os do struct Go (ex: "Ativo"), não da coluna SQL.
+// O tipo de filtro é derivado do widget do campo:
+//   - checkbox (bool)        → filtro exato (Todos/Sim/Não)
+//   - select (kyrux:"fk:..") → filtro exato pelas mesmas opções do <select> do form
+//   - number / number-float  → filtro por faixa (mín/máx)
+//   - datetime                → filtro por faixa de datas
+//
+// Panic no boot se algum nome não existir no model ou for um campo sem
+// widget filtrável (text, textarea, hash, image) — não há filtro coerente
+// pra esses tipos.
+func FilterFields(names ...string) Option {
+	return func(rm *registeredModel) { rm.wantFilter = names }
+}
+
+// BulkAction registra uma ação em lote adicional na listagem, aplicada aos
+// registros selecionados via checkbox. name vira o value do <option> — não
+// pode ser "delete" (reservado pela ação embutida "Excluir selecionados",
+// sempre presente e que não precisa ser registrada). label é o texto exibido.
+//
+//	admin.BulkAction("ativar", "Ativar selecionados", func(db *database.DB, pks []any) error {
+//	    return orm.FromDB[Produto](db).WhereIn("id", pks...).Update(map[string]any{"ativo": true})
+//	})
+func BulkAction(name, label string, fn BulkActionFunc) Option {
+	return func(rm *registeredModel) {
+		if name == "delete" {
+			panic(`admin: BulkAction: name "delete" é reservado pela ação embutida de exclusão em lote`)
+		}
+		rm.bulkActions = append(rm.bulkActions, bulkAction{Name: name, Label: label, Fn: fn})
+	}
 }
 
 // SuperuserOnly restringe o model a usuários com IsAdmin: some da navegação
@@ -184,6 +235,18 @@ func Register[T any](slug, label string, opts ...Option) {
 	}
 	rm.listCols = resolveColumns(rm.Fields, rm.wantList, defaultListCols)
 	rm.searchCols = resolveColumns(rm.Fields, rm.wantSearch, nil)
+	rm.filterFields = resolveFilterFields(label, rm.Fields, rm.wantFilter)
+
+	seenAction := make(map[string]bool, len(rm.bulkActions))
+	for _, ba := range rm.bulkActions {
+		if ba.Name == "" || ba.Label == "" {
+			panic(fmt.Sprintf("admin: model %q: BulkAction precisa de name e label não vazios", label))
+		}
+		if seenAction[ba.Name] {
+			panic(fmt.Sprintf("admin: model %q: BulkAction %q registrada mais de uma vez", label, ba.Name))
+		}
+		seenAction[ba.Name] = true
+	}
 
 	registerCRUD[T](rm)
 
@@ -212,6 +275,7 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 			Column:    f.Column,
 			Label:     humanize(f.Column),
 			GoIndex:   f.GoIndex,
+			Kind:      underlyingKind(sf.Type),
 			Widget:    widget,
 			Optional:  optional,
 			IsPK:      f.IsPK,
@@ -225,6 +289,16 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 		})
 	}
 	return fields
+}
+
+// underlyingKind desembrulha um ponteiro (campo Optional) e devolve o Kind
+// do tipo de destino — usado para converter valores de filtro (string vindo
+// da query string) para o tipo Go real da coluna.
+func underlyingKind(t reflect.Type) reflect.Kind {
+	if t.Kind() == reflect.Ptr {
+		return t.Elem().Kind()
+	}
+	return t.Kind()
 }
 
 // detectWidget escolhe o tipo de input HTML a partir do tipo Go do campo.

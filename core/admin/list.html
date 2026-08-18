@@ -4,25 +4,65 @@
   <a href="{{.NewURL}}" class="btn btn-primary">+ Novo</a>
 </div>
 
-{{if .Searchable}}
+{{if or .Searchable .Filters}}
 <form method="GET" class="toolbar">
+  {{if .Searchable}}
   <input class="search-input" type="text" name="q" value="{{.Search}}" placeholder="Buscar...">
-  <button type="submit" class="btn btn-ghost btn-sm">Buscar</button>
-  {{if .Search}}<a href="{{.ClearURL}}" class="btn btn-ghost btn-sm">Limpar</a>{{end}}
+  {{end}}
+  {{range .Filters}}
+  <div class="filter-field">
+    <label>{{.Label}}</label>
+    {{if .IsRange}}
+      {{if .IsDate}}
+      <input type="date" name="f_{{.Column}}_min" value="{{.MinValue}}" title="De">
+      <span>&ndash;</span>
+      <input type="date" name="f_{{.Column}}_max" value="{{.MaxValue}}" title="Até">
+      {{else}}
+      <input type="number" step="any" class="filter-range-input" name="f_{{.Column}}_min" value="{{.MinValue}}" placeholder="Mín">
+      <span>&ndash;</span>
+      <input type="number" step="any" class="filter-range-input" name="f_{{.Column}}_max" value="{{.MaxValue}}" placeholder="Máx">
+      {{end}}
+    {{else}}
+      {{$cur := .Value}}
+      <select name="f_{{.Column}}">
+        <option value="">Todos</option>
+        {{range .Options}}<option value="{{.Value}}"{{if eq .Value $cur}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    {{end}}
+  </div>
+  {{end}}
+  <button type="submit" class="btn btn-ghost btn-sm">Filtrar</button>
+  {{if or .Search .FiltersActive}}<a href="{{.ClearURL}}" class="btn btn-ghost btn-sm">Limpar</a>{{end}}
 </form>
 {{end}}
 
+<form method="POST" action="{{.BulkURL}}" id="bulk-form" class="js-bulk-form">
+  <input type="hidden" name="{{.CSRFField}}" value="{{.CSRFToken}}">
+  <input type="hidden" name="action" id="bulk-action-input">
+</form>
+
 <div class="panel">
 {{if .Rows}}
+{{if .BulkActions}}
+<div class="bulk-bar" id="bulk-bar" hidden>
+  <span><span id="bulk-count-num">0</span> selecionado(s)</span>
+  <select id="bulk-action-select">
+    {{range .BulkActions}}<option value="{{.Name}}">{{.Label}}</option>{{end}}
+  </select>
+  <button type="button" id="bulk-apply-btn" class="btn btn-danger btn-sm">Aplicar</button>
+</div>
+{{end}}
 <div style="overflow-x:auto">
 <table class="table">
 <thead><tr>
+  {{if .BulkActions}}<th><input type="checkbox" class="js-select-all"></th>{{end}}
   {{range .Columns}}<th>{{if .SortURL}}<a href="{{.SortURL}}">{{.Label}}{{if .SortActive}}{{if .SortDesc}} &#8595;{{else}} &#8593;{{end}}{{end}}</a>{{else}}{{.Label}}{{end}}</th>{{end}}
   <th></th>
 </tr></thead>
 <tbody>
 {{range $row := .Rows}}
 <tr>
+  {{if $.BulkActions}}<td><input type="checkbox" name="ids" value="{{$row.PK}}" form="bulk-form" class="js-row-check"></td>{{end}}
   {{range $col := $.Columns}}<td><a class="cell-link" href="{{$.BasePath}}{{$.Slug}}/{{$row.PK}}/">{{index $row.Values $col.Column}}</a></td>{{end}}
   <td class="actions">
     <form method="POST" action="{{$.BasePath}}{{$.Slug}}/{{$row.PK}}/excluir/" class="js-confirm-delete" style="display:inline">

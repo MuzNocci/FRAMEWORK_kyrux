@@ -2,6 +2,7 @@ package admin
 
 import (
 	"errors"
+	"fmt"
 	"kyrux/core/database"
 	kyerrors "kyrux/core/errors"
 	"kyrux/core/orm"
@@ -105,21 +106,33 @@ type dashboardPageData struct {
 	baseData
 }
 
+// bulkActionView é a opção de ação em lote exibida no <select> da listagem —
+// "delete" (builtin) sempre vem primeiro, seguida das registradas via
+// admin.BulkAction, na ordem de registro.
+type bulkActionView struct {
+	Name  string
+	Label string
+}
+
 type listPageData struct {
 	baseData
-	Label      string
-	Slug       string
-	Columns    []columnView
-	Rows       []adminRow
-	Search     string
-	Searchable bool
-	Page       int
-	HasPrev    bool
-	HasNext    bool
-	PrevURL    string
-	NextURL    string
-	NewURL     string
-	ClearURL   string
+	Label         string
+	Slug          string
+	Columns       []columnView
+	Rows          []adminRow
+	Search        string
+	Searchable    bool
+	Filters       []filterView
+	FiltersActive bool // ao menos um filtro de Filters tem valor atual — controla o link "Limpar"
+	BulkActions   []bulkActionView
+	Page          int
+	HasPrev       bool
+	HasNext       bool
+	PrevURL       string
+	NextURL       string
+	NewURL        string
+	ClearURL      string
+	BulkURL       string
 }
 
 type formPageData struct {
@@ -176,6 +189,7 @@ func Mount(r *router.Router, dbm *database.Manager, store *session.Store, basePa
 	r.Handle("GET "+basePath+"<slug:str>/", guard(s.handleList))
 	r.Handle("GET "+basePath+"<slug:str>/novo/", guard(s.handleNewForm))
 	r.Handle("POST "+basePath+"<slug:str>/novo/", guard(s.handleCreate))
+	r.Handle("POST "+basePath+"<slug:str>/lote/", guard(s.handleBulkAction))
 	r.Handle("GET "+basePath+"<slug:str>/<pk:str>/", guard(s.handleEditForm))
 	r.Handle("POST "+basePath+"<slug:str>/<pk:str>/", guard(s.handleUpdate))
 	r.Handle("POST "+basePath+"<slug:str>/<pk:str>/excluir/", guard(s.handleDelete))
@@ -450,7 +464,11 @@ func (s *site) handleList(ctx *router.Context) {
 		sortCol = ""
 	}
 
-	rows, hasNext, err := rm.list(db, page, pageSize, search, sortCol, sortDesc)
+	filters := buildFilterViews(ctx, db, rm.filterFields)
+	conds := filterConds(rm.filterFields, filters)
+	filtersActive := len(filterURLParams(filters)) > 0
+
+	rows, hasNext, err := rm.list(db, page, pageSize, search, sortCol, sortDesc, conds)
 	if err != nil {
 		http.Error(ctx.Writer, "admin: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -461,6 +479,21 @@ func (s *site) handleList(ctx *router.Context) {
 		byCol[f.Column] = f
 	}
 	listPath := s.basePath + rm.Slug + "/"
+
+	// linkParams é a base comum (busca + filtros ativos) de todo link que
+	// precisa preservar o estado atual da listagem — ordenação e paginação
+	// só adicionam sort/dir/page em cima disso.
+	linkParams := func(extra map[string]string) map[string]string {
+		params := map[string]string{"q": search}
+		for k, v := range filterURLParams(filters) {
+			params[k] = v
+		}
+		for k, v := range extra {
+			params[k] = v
+		}
+		return params
+	}
+
 	columns := make([]columnView, 0, len(rm.listCols))
 	for _, col := range rm.listCols {
 		f := byCol[col]
@@ -472,29 +505,102 @@ func (s *site) handleList(ctx *router.Context) {
 		columns = append(columns, columnView{
 			Column:     col,
 			Label:      f.Label,
-			SortURL:    buildURL(listPath, map[string]string{"q": search, "sort": col, "dir": nextDir}),
+			SortURL:    buildURL(listPath, linkParams(map[string]string{"sort": col, "dir": nextDir})),
 			SortActive: active,
 			SortDesc:   active && sortDesc,
 		})
 	}
 
+	bulkActions := make([]bulkActionView, 0, len(rm.bulkActions)+1)
+	bulkActions = append(bulkActions, bulkActionView{Name: "delete", Label: "Excluir selecionados"})
+	for _, ba := range rm.bulkActions {
+		bulkActions = append(bulkActions, bulkActionView{Name: ba.Name, Label: ba.Label})
+	}
+
 	data := listPageData{
-		baseData:   s.base(ctx, rm.Slug, rm.Label),
-		Label:      rm.Label,
-		Slug:       rm.Slug,
-		Columns:    columns,
-		Rows:       rows,
-		Search:     search,
-		Searchable: len(rm.searchCols) > 0,
-		Page:       page,
-		HasPrev:    page > 1,
-		HasNext:    hasNext,
-		PrevURL:    buildURL(listPath, map[string]string{"q": search, "sort": sortCol, "dir": dir, "page": strconv.Itoa(page - 1)}),
-		NextURL:    buildURL(listPath, map[string]string{"q": search, "sort": sortCol, "dir": dir, "page": strconv.Itoa(page + 1)}),
-		NewURL:     listPath + "novo/",
-		ClearURL:   listPath,
+		baseData:      s.base(ctx, rm.Slug, rm.Label),
+		Label:         rm.Label,
+		Slug:          rm.Slug,
+		Columns:       columns,
+		Rows:          rows,
+		Search:        search,
+		Searchable:    len(rm.searchCols) > 0,
+		Filters:       filters,
+		FiltersActive: filtersActive,
+		BulkActions:   bulkActions,
+		Page:          page,
+		HasPrev:       page > 1,
+		HasNext:       hasNext,
+		PrevURL:       buildURL(listPath, linkParams(map[string]string{"sort": sortCol, "dir": dir, "page": strconv.Itoa(page - 1)})),
+		NextURL:       buildURL(listPath, linkParams(map[string]string{"sort": sortCol, "dir": dir, "page": strconv.Itoa(page + 1)})),
+		NewURL:        listPath + "novo/",
+		ClearURL:      listPath,
+		BulkURL:       listPath + "lote/",
 	}
 	renderPage(ctx.Writer, listTpl, data)
+}
+
+// ── ação em lote ──────────────────────────────────────────────────────────────
+
+func (s *site) handleBulkAction(ctx *router.Context) {
+	rm, ok := modelBySlugFor(ctx, ctx.Param("slug"))
+	if !ok {
+		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusNotFound)
+		return
+	}
+	db := s.dbm.Use(rm.Conn)
+	if db == nil {
+		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusServiceUnavailable)
+		return
+	}
+	if err := ctx.Request.ParseForm(); err != nil {
+		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusBadRequest)
+		return
+	}
+	listPath := s.basePath + rm.Slug + "/"
+
+	action := ctx.Request.PostForm.Get("action")
+	rawIDs := ctx.Request.PostForm["ids"]
+	if len(rawIDs) == 0 {
+		flashOnSession(s.store, ctx.Request, "error", "Nenhum registro selecionado.")
+		ctx.Redirect(listPath, http.StatusFound)
+		return
+	}
+
+	pks := make([]any, 0, len(rawIDs))
+	for _, raw := range rawIDs {
+		pkArg, err := parsePKArg(raw, rm.pkKind)
+		if err != nil {
+			kyerrors.Render(ctx.Writer, ctx.Request, http.StatusBadRequest)
+			return
+		}
+		pks = append(pks, pkArg)
+	}
+
+	var fn BulkActionFunc
+	switch action {
+	case "delete":
+		fn = rm.deleteMany
+	default:
+		for _, ba := range rm.bulkActions {
+			if ba.Name == action {
+				fn = ba.Fn
+				break
+			}
+		}
+	}
+	if fn == nil {
+		kyerrors.Render(ctx.Writer, ctx.Request, http.StatusBadRequest)
+		return
+	}
+
+	if err := fn(db, pks); err != nil {
+		flashOnSession(s.store, ctx.Request, "error", err.Error())
+		ctx.Redirect(listPath, http.StatusFound)
+		return
+	}
+	flashOnSession(s.store, ctx.Request, "success", fmt.Sprintf("%d registro(s) processado(s).", len(pks)))
+	ctx.Redirect(listPath, http.StatusFound)
 }
 
 // ── formulário (criar / editar) ────────────────────────────────────────────────

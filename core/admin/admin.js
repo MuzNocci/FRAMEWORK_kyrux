@@ -7,6 +7,52 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
+  // Seleção em lote: "selecionar todos" no cabeçalho, barra de ação some/
+  // aparece conforme há linhas marcadas, e o botão Aplicar confirma antes
+  // de submeter o form oculto (#bulk-form) — os checkboxes de cada linha
+  // pertencem a ele via atributo form="bulk-form", não por aninhamento
+  // (uma <table> não pode conter um <form> por linha e outro por fora).
+  var bulkForm = document.getElementById('bulk-form');
+  if (bulkForm) {
+    var selectAll = document.querySelector('.js-select-all');
+    var rowChecks = document.querySelectorAll('.js-row-check');
+    var bar = document.getElementById('bulk-bar');
+    var countEl = document.getElementById('bulk-count-num');
+    var applyBtn = document.getElementById('bulk-apply-btn');
+    var actionSelect = document.getElementById('bulk-action-select');
+    var actionInput = document.getElementById('bulk-action-input');
+
+    function updateBulkBar() {
+      var checked = document.querySelectorAll('.js-row-check:checked').length;
+      if (bar) bar.hidden = checked === 0;
+      if (countEl) countEl.textContent = checked;
+      if (selectAll) {
+        selectAll.checked = checked > 0 && checked === rowChecks.length;
+      }
+    }
+    if (selectAll) {
+      selectAll.addEventListener('change', function () {
+        rowChecks.forEach(function (c) { c.checked = selectAll.checked; });
+        updateBulkBar();
+      });
+    }
+    rowChecks.forEach(function (c) {
+      c.addEventListener('change', updateBulkBar);
+    });
+    if (applyBtn && actionSelect && actionInput) {
+      applyBtn.addEventListener('click', function () {
+        var checked = document.querySelectorAll('.js-row-check:checked').length;
+        if (checked === 0) return;
+        var label = actionSelect.options[actionSelect.selectedIndex].text;
+        if (!confirm('Confirma "' + label + '" em ' + checked + ' registro(s)? Esta ação pode não poder ser desfeita.')) {
+          return;
+        }
+        actionInput.value = actionSelect.value;
+        bulkForm.submit();
+      });
+    }
+  }
+
   // Pré-visualização do campo de imagem (kyrux:"image") assim que um
   // arquivo é escolhido — antes do upload, só lendo o arquivo local.
   document.querySelectorAll('.js-image-input').forEach(function (input) {

@@ -24,22 +24,39 @@ type adminRow struct {
 // (handlers.go), nunca pelas closures — mantém o pacote sem acoplamento a
 // como a conexão é obtida (Manager, DB direto, etc.).
 type (
-	listFunc        func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) (rows []adminRow, hasNext bool, err error)
+	listFunc        func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool, filters []filterCond) (rows []adminRow, hasNext bool, err error)
 	getFunc         func(db *database.DB, pk string) (adminRow, error)
 	createFunc      func(db *database.DB, r *http.Request) error
 	updateFunc      func(db *database.DB, pk string, r *http.Request) error
 	deleteFunc      func(db *database.DB, pk string) error
 	ensureTableFunc func(db *database.DB) error
+	// deleteManyFunc é um alias de tipo (não um tipo novo) para BulkActionFunc
+	// (definido em admin.go): a ação embutida "delete" e as registradas via
+	// admin.BulkAction precisam ser intercambiáveis em handleBulkAction, sem
+	// conversão explícita.
+	deleteManyFunc = BulkActionFunc
 )
 
 // registerCRUD fecha as operações de CRUD sobre o tipo T e as guarda em rm.
 // É o único lugar do pacote que ainda "sabe" o tipo concreto — a partir daqui
 // tudo é table-driven via rm.Fields.
 func registerCRUD[T any](rm *registeredModel) {
-	rm.list = func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool) ([]adminRow, bool, error) {
+	rm.list = func(db *database.DB, page, pageSize int, search, sortCol string, sortDesc bool, filters []filterCond) ([]adminRow, bool, error) {
 		q := orm.FromDB[T](db)
 		if search != "" && len(rm.searchCols) > 0 {
 			q = applySearch(q, rm.searchCols, search)
+		}
+		for _, fc := range filters {
+			switch fc.Op {
+			case "=":
+				q = q.WhereEq(fc.Col, fc.Val)
+			case ">=":
+				q = q.WhereGte(fc.Col, fc.Val)
+			case "<=":
+				q = q.WhereLte(fc.Col, fc.Val)
+			case "<":
+				q = q.WhereLt(fc.Col, fc.Val)
+			}
 		}
 		if sortCol != "" {
 			dir := "ASC"
@@ -155,6 +172,12 @@ func registerCRUD[T any](rm *registeredModel) {
 			return err
 		}
 		return orm.FromDB[T](db).Where(rm.pkColumn+" = ?", pkArg).Delete()
+	}
+
+	// deleteMany é a ação em lote embutida ("delete") — um único DELETE com
+	// WhereIn em vez de N deleções individuais.
+	rm.deleteMany = func(db *database.DB, pks []any) error {
+		return orm.FromDB[T](db).WhereIn(rm.pkColumn, pks...).Delete()
 	}
 
 	rm.ensureTable = func(db *database.DB) error {

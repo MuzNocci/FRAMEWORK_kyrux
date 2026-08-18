@@ -41,6 +41,12 @@ main{flex:1;padding:2rem 2.5rem;overflow-y:auto;min-width:0}
 .toolbar{display:flex;gap:.75rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center}
 .search-input{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:.5rem .8rem;border-radius:8px;font-size:.82rem;min-width:220px}
 .search-input:focus{outline:none;border-color:var(--go-blue)}
+.filter-field{display:flex;align-items:center;gap:.4rem;font-size:.78rem;color:var(--muted)}
+.filter-field select,.filter-field input{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:.4rem .6rem;border-radius:8px;font-size:.8rem}
+.filter-field select:focus,.filter-field input:focus{outline:none;border-color:var(--go-blue)}
+.filter-range-input{width:6rem}
+.bulk-bar{display:flex;align-items:center;gap:.75rem;padding:.65rem .9rem;background:var(--blue-dim);border-bottom:1px solid var(--border);font-size:.8rem}
+.bulk-bar select{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:.4rem .6rem;border-radius:8px;font-size:.8rem}
 
 .panel{background:var(--surface);border:1px solid var(--border);border-radius:9px;overflow:hidden}
 .table{width:100%;border-collapse:collapse;font-size:.82rem}

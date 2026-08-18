@@ -2270,13 +2270,14 @@ ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 | Upload de imagem | ✅ — `kyrux:"image"` + `admin.App("nome")` |
 | Múltiplas conexões | ✅ — `admin.Conn("nome")` |
 | FK como `<select>` (só ids existentes) | ✅ — automático em qualquer `kyrux:"fk:tabela"`; rótulo via `kyrux:"fklabel:coluna"` |
+| Filtros avançados na listagem | ✅ — opt-in via `FilterFields` |
+| Ações em lote | ✅ — excluir selecionados embutido; extensível via `BulkAction` |
 | Inlines (editar relação dentro do model pai) | ❌ |
-| Filtros avançados / actions em lote | ❌ |
 | Histórico de alterações | ❌ |
 
-Inlines e filtros avançados ficam de fora por design nesta primeira versão —
-o objetivo é um CRUD sólido e seguro sobre um model por vez, não replicar toda
-a superfície do Django admin.
+Inlines ficam de fora por design nesta primeira versão — o objetivo é um
+CRUD sólido e seguro sobre um model por vez, não replicar toda a superfície
+do Django admin.
 
 ### FK como `<select>` (`kyrux:"fklabel:coluna"`)
 
@@ -2307,6 +2308,67 @@ registros. Medido: evitar o `SELECT COUNT(*)` a cada carregamento da lista
 é ~40% mais rápido no nível do ORM (benchmark isolado, sem HTTP/sessão no
 meio). Se seu caso de uso precisa do total exato, troque para `Paginate` em
 `core/admin/crud.go` — é a única linha que muda.
+
+### Filtros avançados (`FilterFields`)
+
+`FilterFields` adiciona um filtro por campo na listagem, além da busca
+textual — o tipo de filtro é derivado automaticamente do widget do campo,
+sem nenhuma configuração extra:
+
+```go
+type Produto struct {
+    ID          int64     `kyrux:"pk"`
+    Nome        string    `kyrux:"size:200"`
+    Ativo       bool
+    CategoriaID int64     `kyrux:"column:categoria_id,fk:categorias,fklabel:nome"`
+    Preco       float64
+    CriadoEm    time.Time `kyrux:"column:criado_em"`
+}
+
+admin.Register[models.Produto]("produtos", "Produtos",
+    admin.FilterFields("Ativo", "CategoriaID", "Preco", "CriadoEm"),
+)
+```
+
+| Widget do campo | Filtro gerado |
+|---|---|
+| `checkbox` (bool) | Exato — `<select>` com Todos/Sim/Não |
+| `select` (`kyrux:"fk:..."`) | Exato — mesmas opções do `<select>` do formulário |
+| `number` / `number-float` | Faixa — dois campos, mínimo e máximo |
+| `datetime` | Faixa de datas — dois campos, de/até (o limite superior é exclusivo no dia seguinte, cobrindo o dia inteiro independente da hora armazenada) |
+
+Campos com outros widgets (`text`, `textarea`, `password`, `file`) não têm
+filtro coerente e fazem `FilterFields` panicar no boot, com o nome do campo
+e o motivo — mesmo espírito de `ListFields`/`SearchFields` com nome
+desconhecido. Os filtros ativos são preservados nos links de ordenação e
+paginação da própria listagem; "Limpar" reseta busca e filtros de uma vez.
+
+### Ações em lote (`BulkAction`)
+
+A listagem sempre tem uma coluna de checkbox por linha (mais "selecionar
+todos" no cabeçalho) e a ação embutida **Excluir selecionados** — um único
+`DELETE ... WHERE id IN (...)`, não N exclusões individuais. `BulkAction`
+registra ações adicionais, aplicadas aos ids marcados:
+
+```go
+admin.Register[models.Produto]("produtos", "Produtos",
+    admin.BulkAction("ativar", "Ativar selecionados", func(db *database.DB, pks []any) error {
+        return orm.FromDB[models.Produto](db).WhereIn("id", pks...).Update(map[string]any{"ativo": true})
+    }),
+)
+```
+
+- `pks` já vem convertido para o tipo Go real da coluna de PK (mesma
+  conversão usada por uma exclusão/edição individual) — pronto para
+  `WhereIn("id", pks...)`.
+- O nome `"delete"` é reservado pela ação embutida — `BulkAction("delete", ...)`
+  panica no boot. Duas `BulkAction` com o mesmo nome também panicam.
+- Sem nenhum id selecionado, a ação não roda e a listagem volta com o flash
+  "Nenhum registro selecionado." Uma ação com nome desconhecido (POST
+  manual/adulterado) devolve 400.
+- No navegador, o botão "Aplicar" pede confirmação antes de submeter —
+  igual à exclusão individual, para evitar clique acidental numa ação
+  irreversível.
 
 > `admin.Mount`, `admin.EnsureAllTables` e `admin.Count` são exportadas mas de
 > uso interno — `bootstrap.Init()` já as chama sozinho na ordem certa (depois
