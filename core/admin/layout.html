@@ -27,27 +27,43 @@
 {{if .User}}
 <div class="admin-shell">
   <nav class="admin-sidebar">
-    <a href="{{.BasePath}}" class="admin-nav-topic{{if eq "" .ActiveSlug}} active{{end}}">Dashboard</a>
+    <a href="{{.BasePath}}" class="admin-nav-block admin-nav-block-link{{if eq "" .ActiveSlug}} active{{end}}">
+      <svg class="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"></rect><rect x="14" y="3" width="7" height="5" rx="1"></rect><rect x="14" y="12" width="7" height="9" rx="1"></rect><rect x="3" y="16" width="7" height="5" rx="1"></rect></svg>
+      Dashboard
+    </a>
 
-    <div class="admin-nav-topic">Framework</div>
-    {{if .FrameworkModels}}
-    {{range .FrameworkModels}}
-    <a href="{{$.BasePath}}{{.Slug}}/" class="admin-nav-item{{if eq .Slug $.ActiveSlug}} active{{end}}">{{.Label}}</a>
-    {{end}}
-    {{else}}
-    <span class="admin-nav-empty">Nenhum model</span>
-    {{end}}
+    <div class="admin-nav-block">
+      <div class="admin-nav-block-title">
+        <svg class="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.73Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg>
+        Framework
+      </div>
+      {{if .FrameworkModels}}
+      {{range .FrameworkModels}}
+      <a href="{{$.BasePath}}{{.Slug}}/" class="admin-nav-item{{if eq .Slug $.ActiveSlug}} active{{end}}">{{.Label}}</a>
+      {{end}}
+      {{else}}
+      <span class="admin-nav-empty">Nenhum model</span>
+      {{end}}
+    </div>
 
-    <div class="admin-nav-topic">Aplicações</div>
-    {{if .AppModels}}
-    {{range .AppModels}}
-    <a href="{{$.BasePath}}{{.Slug}}/" class="admin-nav-item{{if eq .Slug $.ActiveSlug}} active{{end}}">{{.Label}}</a>
-    {{end}}
-    {{else}}
-    <span class="admin-nav-empty">Nenhum model</span>
-    {{end}}
+    <div class="admin-nav-block">
+      <div class="admin-nav-block-title">
+        <svg class="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg>
+        Aplicações
+      </div>
+      {{if .AppModels}}
+      {{range .AppModels}}
+      <a href="{{$.BasePath}}{{.Slug}}/" class="admin-nav-item{{if eq .Slug $.ActiveSlug}} active{{end}}">{{.Label}}</a>
+      {{end}}
+      {{else}}
+      <span class="admin-nav-empty">Nenhum model</span>
+      {{end}}
+    </div>
 
-    <a href="{{.BasePath}}historico/" class="admin-nav-topic{{if eq "historico" .ActiveSlug}} active{{end}}">Logs</a>
+    <a href="{{.BasePath}}historico/" class="admin-nav-block admin-nav-block-link{{if eq "historico" .ActiveSlug}} active{{end}}">
+      <svg class="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>
+      Logs
+    </a>
   </nav>
   <main>
     {{if .FlashError}}<div class="alert alert-error">{{.FlashError}}</div>{{end}}

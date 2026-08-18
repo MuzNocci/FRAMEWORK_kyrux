@@ -2121,24 +2121,23 @@ a busca fica desativada para aquele model.
 ### Navegação lateral
 
 A barra lateral é organizada em quatro tópicos fixos, sempre nesta ordem,
-com tipografia em caixa alta/peso 700 pra ler como cabeçalho de seção — não
-mais um link comum:
+cada um como uma caixa própria (fundo, borda e cantos arredondados) com
+ícone, separada das demais por espaçamento — não uma lista de texto corrida:
 
-1. **Dashboard** — o próprio tópico é o link, leva para `/admin/` (os cards
-   de todos os models registrados). Sem item separado tipo "Painel" embaixo:
-   como só existe esse destino, o tópico já é clicável.
-2. **Framework** — cabeçalho de seção (não clicável) com os models
-   declarados em algum pacote do próprio framework (`kyrux/core/...`), como
-   `auth.User`. Útil quando você registra o model de usuário embutido para
-   administrar contas pelo painel:
+1. **Dashboard** — caixa inteira é o link, leva para `/admin/` (os cards de
+   todos os models registrados).
+2. **Framework** — caixa com cabeçalho de seção (não clicável) seguido dos
+   models declarados em algum pacote do próprio framework (`kyrux/core/...`),
+   como `auth.User`. Útil quando você registra o model de usuário embutido
+   para administrar contas pelo painel:
    ```go
    admin.Register[auth.User]("usuarios", "Usuários", admin.SuperuserOnly())
    ```
-3. **Aplicações** — cabeçalho de seção com os models declarados nos seus
-   próprios apps (`apps/<nome>/models`).
-4. **Logs** — mesmo padrão de Dashboard: o tópico é o link, leva direto para
-   `/admin/historico/` (ver [Histórico de alterações](#histórico-de-alterações)
-   abaixo).
+3. **Aplicações** — caixa com cabeçalho de seção seguido dos models
+   declarados nos seus próprios apps (`apps/<nome>/models`).
+4. **Logs** — mesmo padrão de Dashboard: a caixa inteira é o link, leva
+   direto para `/admin/historico/` (ver
+   [Histórico de alterações](#histórico-de-alterações) abaixo).
 
 A separação entre Framework e Aplicações é automática: o admin identifica a
 origem de `T` pelo pacote Go onde ele foi declarado
