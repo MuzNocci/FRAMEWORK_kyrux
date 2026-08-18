@@ -49,7 +49,7 @@ func getAppName() string {
 	if v, _ := atomicAppName.Load().(string); v != "" {
 		return v
 	}
-	return environment.GetOr("APP_NAME", "kyrux")
+	return environment.GetOr("APP_NAME", "KYRUX")
 }
 
 func getVersion() string {
