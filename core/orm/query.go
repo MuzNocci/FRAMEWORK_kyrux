@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"kyrux/core/database"
 	"kyrux/core/security/crypton"
+	"math"
 	"reflect"
 	"regexp"
 	"sort"
@@ -21,6 +22,15 @@ func validIdent(s string) bool { return reIdent.MatchString(strings.TrimSpace(s)
 var reJoinOn = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 func validJoinOn(s string) bool { return reJoinOn.MatchString(strings.TrimSpace(s)) }
+
+// reDefault valida o valor de kyrux:"default:..." — entra sem placeholder
+// direto no DDL (autoddl/migrations) e no INSERT (rowValues), então precisa
+// ser restrito a formas que não podem carregar SQL adicional: número,
+// string entre aspas simples (sem aspas escapadas), identificador/palavra-
+// chave opcionalmente seguido de "()" (CURRENT_TIMESTAMP, NOW(), TRUE...).
+var reDefault = regexp.MustCompile(`(?i)^(-?[0-9]+(\.[0-9]+)?|'[^']*'|[a-zA-Z_][a-zA-Z0-9_]*(\(\))?)$`)
+
+func validDefault(s string) bool { return reDefault.MatchString(strings.TrimSpace(s)) }
 
 // sqlExec é satisfeito por *database.DB e *database.Tx — permite que o mesmo
 // builder execute dentro e fora de transações.
@@ -112,19 +122,28 @@ func (q *Query[T]) Join(table, on string) *Query[T] { return q.addJoin("INNER", 
 // LeftJoin adiciona um LEFT JOIN — mesmas regras de Join.
 func (q *Query[T]) LeftJoin(table, on string) *Query[T] { return q.addJoin("LEFT", table, on) }
 
-// Where adiciona uma condição AND à cláusula WHERE.
+// Where adiciona uma condição AND em SQL livre à cláusula WHERE.
 // Use ? como placeholder; para PostgreSQL são reescritos para $N automaticamente.
 //
 //	q.Where("active = ?", true).Where("age > ?", 18)
+//
+// Where é SQL livre: a proteção contra SQL injection depende inteiramente
+// de nunca concatenar entrada do usuário em cond, só passá-la em args. Para
+// filtros comuns, prefira os métodos tipados (WhereEq, WhereIn, WhereLike,
+// WhereGt/WhereGte/WhereLt/WhereLte, WhereNull/WhereNotNull), que validam o
+// nome da coluna e não têm essa armadilha. É idêntico a WhereSQL — mantido
+// por compatibilidade; WhereSQL é o nome recomendado, pois deixa explícito
+// na leitura do código que ali está SQL livre.
 func (q *Query[T]) Where(cond string, args ...any) *Query[T] {
 	q.where = append(q.where, whereClause{cond: cond})
 	q.args = append(q.args, args...)
 	return q
 }
 
-// OrWhere adiciona uma condição OR à cláusula WHERE. Cada condição é
-// parentesizada individualmente; a precedência entre AND e OR segue o SQL
-// (AND liga mais forte).
+// OrWhere adiciona uma condição OR em SQL livre à cláusula WHERE. Cada
+// condição é parentesizada individualmente; a precedência entre AND e OR
+// segue o SQL (AND liga mais forte). Mesma ressalva de Where quanto a SQL
+// injection — é idêntico a OrWhereSQL.
 //
 //	q.Where("tipo = ?", "a").OrWhere("tipo = ?", "b") // (tipo = ?) OR (tipo = ?)
 func (q *Query[T]) OrWhere(cond string, args ...any) *Query[T] {
@@ -133,6 +152,100 @@ func (q *Query[T]) OrWhere(cond string, args ...any) *Query[T] {
 	return q
 }
 
+// WhereSQL é sinônimo de Where: uma condição AND em SQL livre. Use quando
+// nenhum método tipado cobre o filtro — o nome deixa explícito, na leitura
+// do código, que ali está SQL livre e não um filtro validado.
+//
+//	q.WhereSQL("LOWER(name) = LOWER(?)", name)
+func (q *Query[T]) WhereSQL(cond string, args ...any) *Query[T] { return q.Where(cond, args...) }
+
+// OrWhereSQL é sinônimo de OrWhere — ver WhereSQL.
+func (q *Query[T]) OrWhereSQL(cond string, args ...any) *Query[T] { return q.OrWhere(cond, args...) }
+
+// whereOp adiciona "col <op> ?" à cláusula WHERE, validando col como
+// identificador — base compartilhada pelos métodos tipados (WhereEq,
+// WhereLike, WhereGt, ...) que não precisam de SQL livre.
+func (q *Query[T]) whereOp(col, op string, val any, or bool) *Query[T] {
+	if !validIdent(col) {
+		q.err = fmt.Errorf("orm: where: identificador inválido: %q", col)
+		return q
+	}
+	q.where = append(q.where, whereClause{cond: col + " " + op + " ?", or: or})
+	q.args = append(q.args, val)
+	return q
+}
+
+// WhereEq adiciona "col = ?" — forma tipada e segura de Where("col = ?", val).
+func (q *Query[T]) WhereEq(col string, val any) *Query[T] { return q.whereOp(col, "=", val, false) }
+
+// OrWhereEq é a variante OR de WhereEq.
+func (q *Query[T]) OrWhereEq(col string, val any) *Query[T] { return q.whereOp(col, "=", val, true) }
+
+// WhereNe adiciona "col <> ?".
+func (q *Query[T]) WhereNe(col string, val any) *Query[T] { return q.whereOp(col, "<>", val, false) }
+
+// WhereGt adiciona "col > ?".
+func (q *Query[T]) WhereGt(col string, val any) *Query[T] { return q.whereOp(col, ">", val, false) }
+
+// WhereGte adiciona "col >= ?".
+func (q *Query[T]) WhereGte(col string, val any) *Query[T] { return q.whereOp(col, ">=", val, false) }
+
+// WhereLt adiciona "col < ?".
+func (q *Query[T]) WhereLt(col string, val any) *Query[T] { return q.whereOp(col, "<", val, false) }
+
+// WhereLte adiciona "col <= ?".
+func (q *Query[T]) WhereLte(col string, val any) *Query[T] { return q.whereOp(col, "<=", val, false) }
+
+// WhereLike adiciona "col LIKE ?" — lembre de incluir os "%" no pattern
+// (o método não os adiciona sozinho, para não impor um comportamento
+// específico de prefixo/sufixo/contém).
+//
+//	q.WhereLike("name", "%"+termo+"%")
+func (q *Query[T]) WhereLike(col, pattern string) *Query[T] {
+	return q.whereOp(col, "LIKE", pattern, false)
+}
+
+// OrWhereLike é a variante OR de WhereLike.
+func (q *Query[T]) OrWhereLike(col, pattern string) *Query[T] {
+	return q.whereOp(col, "LIKE", pattern, true)
+}
+
+// WhereNull adiciona "col IS NULL".
+func (q *Query[T]) WhereNull(col string) *Query[T] {
+	if !validIdent(col) {
+		q.err = fmt.Errorf("orm: wherenull: identificador inválido: %q", col)
+		return q
+	}
+	q.where = append(q.where, whereClause{cond: col + " IS NULL"})
+	return q
+}
+
+// WhereNotNull adiciona "col IS NOT NULL".
+func (q *Query[T]) WhereNotNull(col string) *Query[T] {
+	if !validIdent(col) {
+		q.err = fmt.Errorf("orm: wherenotnull: identificador inválido: %q", col)
+		return q
+	}
+	q.where = append(q.where, whereClause{cond: col + " IS NOT NULL"})
+	return q
+}
+
+// Asc formata col para ordenação ascendente — sintaxe alternativa a
+// "coluna ASC" para montar OrderBy programaticamente:
+//
+//	q.OrderBy(orm.Desc("created_at"), orm.Asc("id"))
+func Asc(col string) string { return col + " ASC" }
+
+// Desc formata col para ordenação descendente — ver Asc.
+func Desc(col string) string { return col + " DESC" }
+
+// maxWhereInSize limita quantos valores WhereIn aceita numa única chamada —
+// uma lista gigante gera uma query com milhares de placeholders, o que
+// esbarra em limites de driver (PostgreSQL: 65535 no total) e degrada
+// performance bem antes disso. Listas maiores devem ser paginadas ou
+// reescritas como subquery/JOIN.
+const maxWhereInSize = 5000
+
 // WhereIn adiciona "col IN (...)" com expansão automática de placeholders.
 // Aceita valores variádicos ou um único slice:
 //
@@ -140,6 +253,7 @@ func (q *Query[T]) OrWhere(cond string, args ...any) *Query[T] {
 //	q.WhereIn("id", ids) // ids pode ser []int64, []string, etc.
 //
 // Lista vazia corresponde a nenhum resultado (comportamento do Django __in=[]).
+// Lista com mais de maxWhereInSize valores gera erro — ver a constante.
 func (q *Query[T]) WhereIn(col string, vals ...any) *Query[T] {
 	if !validIdent(col) {
 		q.err = fmt.Errorf("orm: wherein: identificador inválido: %q", col)
@@ -156,6 +270,10 @@ func (q *Query[T]) WhereIn(col string, vals ...any) *Query[T] {
 	}
 	if len(vals) == 0 {
 		q.where = append(q.where, whereClause{cond: "1 = 0"})
+		return q
+	}
+	if len(vals) > maxWhereInSize {
+		q.err = fmt.Errorf("orm: wherein: lista com %d valores excede o limite de %d — pagine ou reescreva como subquery/JOIN", len(vals), maxWhereInSize)
 		return q
 	}
 	var sb strings.Builder
@@ -530,6 +648,14 @@ func (q *Query[T]) Delete() error {
 // Como o Where é SQL livre, os campos do filtro NÃO são copiados para
 // defaults — preencha defaults com todos os valores do novo registro,
 // incluindo os usados no filtro (equivalente ao get_or_create do Django).
+//
+// Corrida: o intervalo entre o First() e o Create() não é atômico — duas
+// chamadas concorrentes podem ambas cair no ramo de criação. Se as colunas
+// do filtro tiverem uma constraint UNIQUE no banco, uma das duas falha por
+// violação de unicidade e GetOrCreate refaz o lookup automaticamente,
+// devolvendo a linha criada pela outra (created=false). SEM essa constraint,
+// a corrida gera uma linha duplicada — GetOrCreate não substitui um índice
+// único quando unicidade é uma garantia real de negócio.
 func (q *Query[T]) GetOrCreate(defaults *T) (obj *T, created bool, err error) {
 	obj, err = q.First()
 	if err == nil {
@@ -539,6 +665,11 @@ func (q *Query[T]) GetOrCreate(defaults *T) (obj *T, created bool, err error) {
 		return nil, false, err
 	}
 	if err := createInto(q.exec, q.driver, q.schema, defaults); err != nil {
+		if isUniqueViolation(err) {
+			if obj, ferr := q.First(); ferr == nil {
+				return obj, false, nil
+			}
+		}
 		return nil, false, err
 	}
 	return defaults, true, nil
@@ -546,6 +677,11 @@ func (q *Query[T]) GetOrCreate(defaults *T) (obj *T, created bool, err error) {
 
 // UpdateOrCreate atualiza as linhas do filtro com values; se nenhuma existir,
 // insere defaults (created=true). Equivalente ao update_or_create do Django.
+//
+// Mesma ressalva de corrida que GetOrCreate: se o Create() concorrente falhar
+// por violação de unicidade, UpdateOrCreate refaz como Update (created=false)
+// em vez de propagar o erro — mas isso só protege de verdade quando as
+// colunas do filtro têm constraint UNIQUE no banco.
 func (q *Query[T]) UpdateOrCreate(values map[string]any, defaults *T) (created bool, err error) {
 	exists, err := q.Exists()
 	if err != nil {
@@ -554,7 +690,38 @@ func (q *Query[T]) UpdateOrCreate(values map[string]any, defaults *T) (created b
 	if exists {
 		return false, q.Update(values)
 	}
-	return true, createInto(q.exec, q.driver, q.schema, defaults)
+	if err := createInto(q.exec, q.driver, q.schema, defaults); err != nil {
+		if isUniqueViolation(err) {
+			return false, q.Update(values)
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// maxPageSize limita pageSize em Paginate/PaginateNoCount/PaginateAfter —
+// sem isso, um pageSize extremo (ou vindo direto de query string sem
+// validação) gera um LIMIT/OFFSET absurdo e um result set gigante em
+// memória. Não limita page: offset é calculado com aritmética que satura
+// em math.MaxInt em vez de estourar (uma page muito grande só resulta em
+// nenhuma linha, não em comportamento indefinido).
+const maxPageSize = 1000
+
+// clampPaging normaliza page/pageSize e evita overflow em (page-1)*pageSize.
+func clampPaging(page, pageSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+	if maxPage := math.MaxInt/pageSize + 1; page > maxPage {
+		page = maxPage
+	}
+	return page, pageSize
 }
 
 // Page contém o resultado paginado de uma consulta.
@@ -569,18 +736,18 @@ type Page[T any] struct {
 }
 
 // Paginate executa a consulta com paginação e retorna uma Page[T] com dados e metadados.
-// page começa em 1; pageSize define o número de itens por página.
+// page começa em 1; pageSize define o número de itens por página, limitado
+// a maxPageSize (valores maiores são silenciosamente reduzidos ao limite —
+// importante quando page/pageSize vêm direto de query string do request).
 // Os filtros Where e OrderBy aplicados antes são respeitados.
+//
+// Para tabelas muito grandes, onde o custo de OFFSET cresce com a posição
+// da página, considere PaginateAfter (keyset pagination).
 func (q *Query[T]) Paginate(page, pageSize int) (Page[T], error) {
 	if q.err != nil {
 		return Page[T]{}, q.err
 	}
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
+	page, pageSize = clampPaging(page, pageSize)
 
 	total, err := q.Count()
 	if err != nil {
@@ -624,12 +791,7 @@ func (q *Query[T]) PaginateNoCount(page, pageSize int) (Page[T], error) {
 	if q.err != nil {
 		return Page[T]{}, q.err
 	}
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
+	page, pageSize = clampPaging(page, pageSize)
 
 	offset := (page - 1) * pageSize
 	sqlStr, args := q.buildSelectPage(pageSize+1, offset)
@@ -658,6 +820,86 @@ func (q *Query[T]) PaginateNoCount(page, pageSize int) (Page[T], error) {
 		HasNext:    hasNext,
 		HasPrev:    page > 1,
 	}, nil
+}
+
+// KeysetPage contém uma página de resultados de PaginateAfter, mais o
+// cursor para buscar a próxima.
+type KeysetPage[T any] struct {
+	Items      []T
+	NextCursor any // valor de col na última linha da página; nil se HasNext for false
+	HasNext    bool
+}
+
+// PaginateAfter pagina por keyset (cursor) em vez de OFFSET — o custo por
+// página não cresce com a posição, ao contrário de Paginate/PaginateNoCount,
+// que ficam mais lentas conforme offset aumenta (o banco ainda precisa
+// varrer e descartar as linhas puladas). Prefira PaginateAfter para tabelas
+// grandes e feeds/scroll infinito; use Paginate quando precisar de números
+// de página e Total/TotalPages exatos.
+//
+// col deve ser uma coluna com valores únicos e ordenáveis (tipicamente a PK
+// ou uma coluna autonow como criado_em); after é o NextCursor da página
+// anterior (nil ou zero value na primeira). Os filtros Where já aplicados
+// continuam valendo; PaginateAfter adiciona "col > ?" (ou "col < ?" com
+// desc=true) e ordena por col — não combine com um OrderBy próprio na
+// mesma query, pois PaginateAfter substitui a ordenação por col.
+//
+//	page, err := orm.From[Post]("default").Where("publicado = ?", true).
+//	    PaginateAfter("id", cursor, false, 20)
+//	// próxima chamada: PaginateAfter("id", page.NextCursor, false, 20)
+func (q *Query[T]) PaginateAfter(col string, after any, desc bool, limit int) (KeysetPage[T], error) {
+	if q.err != nil {
+		return KeysetPage[T]{}, q.err
+	}
+	if !validIdent(col) {
+		return KeysetPage[T]{}, fmt.Errorf("orm: paginateafter: identificador inválido: %q", col)
+	}
+	f, ok := q.meta.ColToField[col]
+	if !ok {
+		return KeysetPage[T]{}, fmt.Errorf("orm: paginateafter: coluna desconhecida: %q", col)
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+
+	op, order := ">", col+" ASC"
+	if desc {
+		op, order = "<", col+" DESC"
+	}
+
+	rq := *q
+	if after != nil && !isZeroValue(after) {
+		rq.where = append(append([]whereClause{}, q.where...), whereClause{cond: col + " " + op + " ?"})
+		rq.args = append(append([]any{}, q.args...), after)
+	}
+	rq.orderBy = []string{order}
+
+	sqlStr, args := rq.buildSelect(limit + 1)
+	rows, err := rq.queryRows(sqlStr, args)
+	if err != nil {
+		return KeysetPage[T]{}, fmt.Errorf("orm: paginateafter: %w", err)
+	}
+	defer rows.Close()
+
+	items, err := scanRows[T](rows, rq.meta)
+	if err != nil {
+		return KeysetPage[T]{}, err
+	}
+
+	hasNext := len(items) > limit
+	if hasNext {
+		items = items[:limit]
+	}
+
+	var next any
+	if hasNext && len(items) > 0 {
+		next = reflect.ValueOf(items[len(items)-1]).Field(f.GoIndex).Interface()
+	}
+
+	return KeysetPage[T]{Items: items, NextCursor: next, HasNext: hasNext}, nil
 }
 
 // ── construção de SQL ─────────────────────────────────────────────────────────

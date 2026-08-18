@@ -1128,7 +1128,13 @@ type Cliente struct {
 
 > **`default:valor`** — quando o campo tiver valor zero Go (`""`, `0`, `false`),
 > o ORM usa o literal diretamente no SQL (`VALUES (..., NOW(), ...)`), sem passar como argumento.
-> Útil para timestamps, UUIDs e qualquer função SQL de banco.
+> Útil para timestamps, UUIDs e qualquer função SQL de banco. Como entra sem
+> placeholder, `valor` só aceita número, string entre aspas simples ou
+> identificador/palavra-chave opcionalmente seguido de `()` (`NOW()`,
+> `CURRENT_TIMESTAMP`, `true`, `'pending'`) — qualquer outra forma faz o
+> framework recusar o model com panic na primeira vez que ele é usado (erro
+> de configuração, não de runtime). O mesmo vale para `fk:tabela` e
+> `fklabel:coluna`: só identificadores simples.
 
 #### Nome da tabela
 
@@ -1200,18 +1206,38 @@ publicados, err := orm.FromDB[Post](db).
 
 #### Métodos de filtro encadeáveis
 
+Para o filtro comum (igualdade, comparação, `LIKE`, `NULL`), prefira os
+métodos tipados abaixo: eles validam o nome da coluna e não têm risco de SQL
+injection por descuido. `Where`/`OrWhere` continuam existindo para o que os
+tipados não cobrem — SQL livre, então a segurança depende de nunca
+concatenar entrada do usuário na condição, só passá-la em `args`.
+
 | Método | Descrição |
 |---|---|
-| `Where(cond string, args ...any)` | Adiciona condição `AND`. Múltiplos `Where` são combinados com `AND`. |
-| `OrWhere(cond string, args ...any)` | Adiciona condição `OR` (precedência: AND liga mais forte, como no SQL). |
-| `WhereIn(col string, vals ...any)` | `col IN (...)` com expansão de placeholders. Aceita slice: `WhereIn("id", ids)`. Lista vazia = nenhum resultado. |
-| `OrderBy(cols ...string)` | Define `ORDER BY` — múltiplas colunas: `OrderBy("criado_em DESC", "id ASC")`. |
+| `WhereEq(col string, val any)` / `OrWhereEq(...)` | `col = ?` — forma tipada e segura de `Where("col = ?", val)`. |
+| `WhereNe(col string, val any)` | `col <> ?` |
+| `WhereGt/WhereGte/WhereLt/WhereLte(col string, val any)` | `col >`, `>=`, `<`, `<=` `?` |
+| `WhereLike(col, pattern string)` / `OrWhereLike(...)` | `col LIKE ?` — inclua os `%` no pattern: `WhereLike("nome", "%maria%")`. |
+| `WhereNull(col string)` / `WhereNotNull(col string)` | `col IS NULL` / `col IS NOT NULL`. |
+| `Where(cond string, args ...any)` | Condição `AND` em **SQL livre** — use `?` como placeholder, nunca concatene valores na string. Múltiplos `Where` são combinados com `AND`. Idêntico a `WhereSQL`, mantido por compatibilidade. |
+| `OrWhere(cond string, args ...any)` | Condição `OR` em SQL livre (precedência: AND liga mais forte, como no SQL). Idêntico a `OrWhereSQL`. |
+| `WhereSQL(cond string, args ...any)` / `OrWhereSQL(...)` | Sinônimos de `Where`/`OrWhere` — nome recomendado quando o filtro é SQL livre de propósito, deixando isso explícito na leitura do código. |
+| `WhereIn(col string, vals ...any)` | `col IN (...)` com expansão de placeholders. Aceita slice: `WhereIn("id", ids)`. Lista vazia = nenhum resultado; lista com mais de 5000 valores gera erro (pagine ou use subquery/JOIN). |
+| `OrderBy(cols ...string)` | Define `ORDER BY` — múltiplas colunas: `OrderBy("criado_em DESC", "id ASC")`. `orm.Asc("col")`/`orm.Desc("col")` são sintaxe alternativa para montar isso programaticamente: `OrderBy(orm.Desc("criado_em"), orm.Asc("id"))`. |
 | `Join(tabela, on)` / `LeftJoin(tabela, on)` | JOIN para **filtrar** pela tabela relacionada. O SELECT vira `tabela_base.*` — o resultado continua `[]T`. |
 | `Search(col, termo)` | Busca full-text nativa numa coluna `kyrux:"fts"` — ver [Busca full-text (Search)](#busca-full-text-search) abaixo. |
 | `Select(cols ...string)` | Restringe as colunas do `SELECT` (padrão: `SELECT *`). Colunas fora da lista ficam com zero value no struct — não use para depois `Update` o registro inteiro de volta. |
 | `Distinct()` | `SELECT DISTINCT`. |
 | `Limit(n int)` | Máximo de linhas retornadas. |
 | `Offset(n int)` | Linhas a pular — use com `Limit` para paginação. |
+
+```go
+// Antes (SQL livre) — continua funcionando, mas sem validação de coluna:
+orm.FromDB[Post](db).Where("status = ?", status).All()
+
+// Preferido — coluna validada, mesmo resultado:
+orm.FromDB[Post](db).WhereEq("status", status).All()
+```
 
 #### Métodos de execução
 
@@ -1223,8 +1249,8 @@ publicados, err := orm.FromDB[Post](db).
 | `Exists()` | `bool, error` | `SELECT 1 ... LIMIT 1` — mais barato que Count. |
 | `Count()` | `int64, error` | Número de linhas do filtro. |
 | `Sum/Avg/Min/Max(col)` | `float64, error` | Agregações numéricas (NULL → 0). |
-| `GetOrCreate(defaults *T)` | `*T, bool, error` | Busca; se não existir, insere `defaults` (created=true). Preencha `defaults` com os valores do filtro também. |
-| `UpdateOrCreate(values, defaults *T)` | `bool, error` | Atualiza as linhas do filtro; se nenhuma, insere `defaults`. |
+| `GetOrCreate(defaults *T)` | `*T, bool, error` | Busca; se não existir, insere `defaults` (created=true). Preencha `defaults` com os valores do filtro também. Se o `Create` colidir com uma constraint `UNIQUE` (corrida: outro processo criou entre a busca e a inserção), refaz a busca automaticamente em vez de propagar o erro — só protege de verdade quando as colunas do filtro têm `UNIQUE` no banco. |
+| `UpdateOrCreate(values, defaults *T)` | `bool, error` | Atualiza as linhas do filtro; se nenhuma, insere `defaults`. Mesma recuperação de corrida de `GetOrCreate`. |
 
 ### Criação
 
@@ -1308,6 +1334,34 @@ Para tabelas grandes e feeds infinitos, `PaginateNoCount` evita o `COUNT(*)`
 ```go
 p, err := orm.FromDB[Post](db).OrderBy("id DESC").PaginateNoCount(page, 20)
 ```
+
+`Paginate`/`PaginateNoCount` limitam `pageSize` a 1000 (valores maiores são
+reduzidos silenciosamente) — importante quando `page`/`pageSize` vêm direto
+de query string sem validação própria.
+
+Ambas ainda usam `OFFSET`, que fica mais caro conforme a página avança (o
+banco varre e descarta as linhas puladas). Para tabelas muito grandes ou
+scroll infinito, use `PaginateAfter` — keyset (cursor) pagination, cujo
+custo não cresce com a posição da página:
+
+```go
+cursor := ctx.QueryInt64("cursor", 0) // 0 = primeira página
+
+p, err := orm.FromDB[Post](db).
+    Where("publicado = ?", true).
+    PaginateAfter("id", cursor, false, 20) // col, after, desc, limit
+
+// p.Items      → []Post da página atual
+// p.NextCursor → passe para PaginateAfter na próxima chamada
+// p.HasNext    → true se há próxima página
+```
+
+`col` precisa ser única e ordenável (tipicamente a PK ou uma coluna
+`autonow`); `PaginateAfter` adiciona `col > ?` (ou `col < ?` com `desc:
+true`) e ordena por `col` — não combine com um `OrderBy` próprio na mesma
+query, pois `PaginateAfter` substitui a ordenação por `col`. Diferente de
+`Paginate`, não há `Total`/`TotalPages`/números de página — só "próxima
+página existe ou não".
 
 ### Relações: filtrar com Join, carregar com Prefetch
 
@@ -3226,14 +3280,21 @@ orm.FromDB[T](db).Exists()                       // (bool, error)
 orm.FromDB[T](db).Count()                        // (int64, error)
 orm.FromDB[T](db).Sum("col")                     // (float64, error) — também Avg/Min/Max
 
-// Filtros encadeáveis (retornam *Query[T])
-.Where("col = ?", val)
-.OrWhere("col = ?", val)
-.WhereIn("id", ids)           // expande slice em placeholders
+// Filtros tipados (retornam *Query[T]) — preferidos: coluna validada
+.WhereEq("col", val)          // col = ?      (também OrWhereEq)
+.WhereNe("col", val)          // col <> ?
+.WhereGt/.WhereGte/.WhereLt/.WhereLte("col", val)  // col >, >=, <, <= ?
+.WhereLike("col", "%termo%")  // col LIKE ?   (também OrWhereLike)
+.WhereNull("col") / .WhereNotNull("col")
+
+// Filtros em SQL livre — nunca concatene valores na string, só em args
+.Where("col = ?", val)        // idêntico a WhereSQL
+.OrWhere("col = ?", val)      // idêntico a OrWhereSQL
+.WhereIn("id", ids)           // expande slice em placeholders (máx. 5000 valores)
 .Join("users", "users.id = posts.user_id")     // filtro por relação
 .LeftJoin("users", "users.id = posts.user_id")
 .Search("conteudo", "termo")  // full-text (campo kyrux:"fts") — já ordena por relevância
-.OrderBy("col DESC", "id")    // múltiplas colunas
+.OrderBy("col DESC", "id")    // múltiplas colunas — ou orm.Desc("col")/orm.Asc("col")
 .Select("id", "titulo")       // restringe colunas do SELECT (padrão: *)
 .Distinct()
 .Limit(n)
@@ -3244,18 +3305,21 @@ orm.Prefetch[Comentario](db, "post_id", ids, func(c *Comentario) int64 { return 
 // → (map[int64][]Comentario, error)
 
 // Paginação
-orm.FromDB[T](db).Where(...).OrderBy("id DESC").Paginate(page, 20)
-orm.FromDB[T](db).OrderBy("id DESC").PaginateNoCount(page, 20) // sem COUNT(*)
+orm.FromDB[T](db).Where(...).OrderBy("id DESC").Paginate(page, 20)     // pageSize máx. 1000
+orm.FromDB[T](db).OrderBy("id DESC").PaginateNoCount(page, 20)         // sem COUNT(*)
 // → (Page[T], error)
 // Page[T]: Items, Total, Page, PageSize, TotalPages, HasNext, HasPrev
+
+orm.FromDB[T](db).PaginateAfter("id", cursor, false, 20) // keyset — custo não cresce com a página
+// → (KeysetPage[T], error) — KeysetPage[T]: Items, NextCursor, HasNext
 
 // Escrita
 orm.Create(db, &model)                         // error — preenche PK
 orm.CreateAll(db, []*T{...})                   // bulk: um INSERT multi-VALUES
 orm.FromDB[T](db).Where(...).Update(map[string]any{...}) // error
 orm.FromDB[T](db).Where(...).Delete()            // error
-orm.FromDB[T](db).Where(...).GetOrCreate(&defaults)      // (*T, created, error)
-orm.FromDB[T](db).Where(...).UpdateOrCreate(values, &defaults) // (created, error)
+orm.FromDB[T](db).Where(...).GetOrCreate(&defaults)      // (*T, created, error) — recupera de corrida via UNIQUE
+orm.FromDB[T](db).Where(...).UpdateOrCreate(values, &defaults) // (created, error) — idem
 
 // Transações (atômico — commit/rollback automático)
 fw.DB.Use().Transaction(func(tx *database.Tx) error {

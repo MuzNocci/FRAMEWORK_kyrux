@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"kyrux/core/security/crypton"
-	"log"
 	"reflect"
 )
 
@@ -52,17 +51,18 @@ func scanOne[T any](rows *sql.Rows, plan scanPlan, dests []any, discard *any) (T
 		return zero, fmt.Errorf("orm: scan: %w", err)
 	}
 
-	// Decifra campos marcados com kyrux:"encrypt".
+	// Decifra campos marcados com kyrux:"encrypt". Fail-closed: chave errada
+	// ou dado corrompido abortam o scan — nunca devolvem o struct com
+	// ciphertext bruto no campo, o que passaria despercebido para o
+	// chamador como se fosse o valor real.
 	for _, i := range plan.encCols {
 		fv := v.Field(plan.fieldIdx[i])
 		if fv.Kind() == reflect.String && fv.CanSet() {
-			if dec, err := crypton.Decrypt(fv.String()); err == nil {
-				fv.SetString(dec)
-			} else {
-				// Mantém o ciphertext no campo, mas registra: chave errada
-				// ou dado corrompido não podem falhar em silêncio.
-				log.Printf("orm: decrypt coluna %s: %v", plan.cols[i], err)
+			dec, err := crypton.Decrypt(fv.String())
+			if err != nil {
+				return zero, fmt.Errorf("orm: decrypt coluna %s: %w", plan.cols[i], err)
 			}
+			fv.SetString(dec)
 		}
 	}
 	return zero, nil

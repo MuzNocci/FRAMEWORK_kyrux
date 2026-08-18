@@ -2,12 +2,17 @@ package orm
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"kyrux/core/database"
 	"kyrux/core/security/crypton"
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/go-sql-driver/mysql"
+	"github.com/lib/pq"
+	"modernc.org/sqlite"
 )
 
 // bulkChunkSize limita linhas por INSERT no CreateAll — mantém o número de
@@ -266,6 +271,32 @@ func qualifiedTable(schema, table string) string {
 // isPG reporta se o driver é PostgreSQL (lib/pq ou pgx).
 func isPG(driver string) bool {
 	return driver == "postgres" || driver == "pgx"
+}
+
+// isUniqueViolation reporta se err veio de uma constraint UNIQUE (ou PK)
+// violada — usado por GetOrCreate/UpdateOrCreate para distinguir "outro
+// processo criou a linha entre o SELECT e o INSERT" (corrida esperada, trata
+// como sucesso) de qualquer outro erro de banco (propaga). Checa o tipo de
+// erro nativo de cada um dos três drivers embutidos no framework — sem
+// fallback por string, que quebraria silenciosamente ao mudar a mensagem
+// de erro do driver.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		return pqErr.Code == "23505" // unique_violation (SQLSTATE)
+	}
+	var myErr *mysql.MySQLError
+	if errors.As(err, &myErr) {
+		return myErr.Number == 1062 // ER_DUP_ENTRY
+	}
+	var liteErr *sqlite.Error
+	if errors.As(err, &liteErr) {
+		return strings.Contains(liteErr.Error(), "UNIQUE constraint")
+	}
+	return false
 }
 
 // rewritePlaceholders converte ? para $N (PostgreSQL).

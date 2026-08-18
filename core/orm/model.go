@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -110,6 +111,24 @@ func buildMeta(t reflect.Type) *ModelMeta {
 		if f.IsAutoNow && f.Default == "" {
 			f.Default = "CURRENT_TIMESTAMP"
 		}
+
+		// Metadata das tags kyrux entra direto na construção de SQL
+		// estrutural (SELECT/INSERT/UPDATE, DDL do autoddl/migrations) sem
+		// passar por placeholder — valida aqui, uma vez por tipo, em vez de
+		// confiar que nenhuma tag futura virá de fonte não confiável.
+		if !validIdent(f.Column) {
+			panic(fmt.Sprintf("orm: model %s: coluna inválida no campo %s (tag kyrux %q ou nome do campo): %q", t.Name(), f.Name, sf.Tag.Get("kyrux"), f.Column))
+		}
+		if f.FK != "" && !validIdent(f.FK) {
+			panic(fmt.Sprintf("orm: model %s: kyrux:\"fk:...\" inválido no campo %s: %q", t.Name(), f.Name, f.FK))
+		}
+		if f.FKLabel != "" && !validIdent(f.FKLabel) {
+			panic(fmt.Sprintf("orm: model %s: kyrux:\"fklabel:...\" inválido no campo %s: %q", t.Name(), f.Name, f.FKLabel))
+		}
+		if f.Default != "" && !validDefault(f.Default) {
+			panic(fmt.Sprintf("orm: model %s: kyrux:\"default:...\" inválido no campo %s: %q", t.Name(), f.Name, f.Default))
+		}
+
 		meta.Fields = append(meta.Fields, f)
 		if f.IsPK && meta.PKField == nil {
 			cp := f
