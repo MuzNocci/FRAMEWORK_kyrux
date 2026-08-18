@@ -39,9 +39,11 @@ func findLocalFKColumn(table, targetTable string) (string, bool) {
 // (kyrux:"fklabel:..."): partes separadas por "+", cada uma "coluna" (do
 // próprio table) ou "tabela.coluna" (segue o FK de table até essa tabela,
 // via LEFT JOIN resolvido por findLocalFKColumn). Múltiplas partes são
-// concatenadas com " — ". Devolve a expressão SELECT e as cláusulas JOIN
-// necessárias, ou erro se alguma "tabela.coluna" não corresponder a nenhum
-// campo kyrux:"fk:tabela" em table.
+// concatenadas com " - " e o resultado sai em maiúsculas (UPPER), pra
+// destacar o rótulo no <select> — ex: "ERINK MARCELO - CIPETRAN NORTE".
+// Devolve a expressão SELECT e as cláusulas JOIN necessárias, ou erro se
+// alguma "tabela.coluna" não corresponder a nenhum campo kyrux:"fk:tabela"
+// em table.
 func buildFKLabelExpr(table, labelCol string) (expr string, joins []string, err error) {
 	if labelCol == "" {
 		return table + ".id", nil, nil
@@ -66,7 +68,7 @@ func buildFKLabelExpr(table, labelCol string) (expr string, joins []string, err 
 			selectParts = append(selectParts, fmt.Sprintf("COALESCE(%s.%s, '')", table, part))
 		}
 	}
-	return strings.Join(selectParts, " || ' — ' || "), joins, nil
+	return "UPPER(" + strings.Join(selectParts, " || ' - ' || ") + ")", joins, nil
 }
 
 // fetchFKOptions carrega as linhas existentes de table para popular o
