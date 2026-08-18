@@ -27,8 +27,7 @@
 {{if .User}}
 <div class="admin-shell">
   <nav class="admin-sidebar">
-    <div class="admin-nav-topic">Dashboard</div>
-    <a href="{{.BasePath}}" class="admin-nav-item{{if eq "" .ActiveSlug}} active{{end}}">Painel</a>
+    <a href="{{.BasePath}}" class="admin-nav-topic{{if eq "" .ActiveSlug}} active{{end}}">Dashboard</a>
 
     <div class="admin-nav-topic">Framework</div>
     {{if .FrameworkModels}}
@@ -48,8 +47,7 @@
     <span class="admin-nav-empty">Nenhum model</span>
     {{end}}
 
-    <div class="admin-nav-topic">Logs</div>
-    <a href="{{.BasePath}}historico/" class="admin-nav-item{{if eq "historico" .ActiveSlug}} active{{end}}">Histórico</a>
+    <a href="{{.BasePath}}historico/" class="admin-nav-topic{{if eq "historico" .ActiveSlug}} active{{end}}">Logs</a>
   </nav>
   <main>
     {{if .FlashError}}<div class="alert alert-error">{{.FlashError}}</div>{{end}}
