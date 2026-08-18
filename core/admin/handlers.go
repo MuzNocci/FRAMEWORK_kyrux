@@ -61,6 +61,8 @@ type baseData struct {
 	PageTitle  string
 	BasePath   string
 	ActiveSlug string
+	CSSVer     string
+	JSVer      string
 	// Models é a lista completa (framework + apps), na ordem de registro —
 	// usada pelo dashboard, que não precisa da separação por origem.
 	Models []navItem
@@ -297,6 +299,8 @@ func (s *site) base(ctx *router.Context, activeSlug, pageTitle string) baseData 
 		PageTitle:  pageTitle,
 		BasePath:   s.basePath,
 		ActiveSlug: activeSlug,
+		CSSVer:     cssVer,
+		JSVer:      jsVer,
 		CSRFField:  csrf.FieldName(),
 		CSRFToken:  csrf.TokenFor(ctx),
 	}

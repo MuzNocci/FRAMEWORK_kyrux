@@ -21,6 +21,16 @@ var adminCSS []byte
 //go:embed admin.js
 var adminJS []byte
 
+// cssVer/jsVer: prefixo do sha256 do conteúdo embutido, usado como
+// query string (?v=) nos links de admin.css/admin.js — o Cache-Control
+// desses assets é "immutable" (ver serveStatic), então sem um cache
+// buster atrelado ao conteúdo o navegador nunca revalida a URL e passa a
+// servir a versão antiga indefinidamente após um novo deploy.
+var (
+	cssVer = fmt.Sprintf("%x", sha256.Sum256(adminCSS))[:10]
+	jsVer  = fmt.Sprintf("%x", sha256.Sum256(adminJS))[:10]
+)
+
 // mustPage clona o layout compartilhado e anexa o template de conteúdo da
 // página — cada página define seu próprio {{define "content"}}, executado
 // dentro do layout via ExecuteTemplate(w, "layout", data).

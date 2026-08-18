@@ -7,7 +7,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>{{.PageTitle}} | {{.AppName}} Admin</title>
 <link rel="icon" type="image/png" href="/kyrux/statics/kyrux_icon.png">
-<link rel="stylesheet" href="{{.BasePath}}statics/admin.css">
+<link rel="stylesheet" href="{{.BasePath}}statics/admin.css?v={{.CSSVer}}">
 </head>
 <body>
 <header>
@@ -71,7 +71,7 @@
     {{template "content" .}}
   </main>
 </div>
-<script src="{{.BasePath}}statics/admin.js" defer></script>
+<script src="{{.BasePath}}statics/admin.js?v={{.JSVer}}" defer></script>
 {{else}}
 {{template "content" .}}
 {{end}}
