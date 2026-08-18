@@ -70,3 +70,27 @@ func TestBaseSeparaFrameworkEAppModels(t *testing.T) {
 		t.Errorf("AppModels incorreto: %v", b.AppModels)
 	}
 }
+
+// TestBaseUserPrefereNomeCompleto cobre o texto ao lado do botão Sair no
+// header: nome completo quando existir, username só como fallback.
+func TestBaseUserPrefereNomeCompleto(t *testing.T) {
+	resetRegistry()
+	t.Cleanup(resetRegistry)
+	s := &site{basePath: "/admin/", appName: "Teste", version: "0.0.0", store: session.NewStore(time.Hour)}
+	newCtx := func(u *auth.User) *router.Context {
+		req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
+		ctx := &router.Context{Writer: httptest.NewRecorder(), Request: req}
+		ctx.Set(userCtxKey, u)
+		return ctx
+	}
+
+	if b := s.base(newCtx(&auth.User{Username: "admin", FirstName: "Ana", LastName: "Silva"}), "", ""); b.User != "Ana Silva" {
+		t.Errorf("com nome completo, esperava %q, recebeu %q", "Ana Silva", b.User)
+	}
+	if b := s.base(newCtx(&auth.User{Username: "admin", FirstName: "Ana"}), "", ""); b.User != "Ana" {
+		t.Errorf("só com FirstName, esperava %q, recebeu %q", "Ana", b.User)
+	}
+	if b := s.base(newCtx(&auth.User{Username: "admin"}), "", ""); b.User != "admin" {
+		t.Errorf("sem nome, esperava fallback para username %q, recebeu %q", "admin", b.User)
+	}
+}

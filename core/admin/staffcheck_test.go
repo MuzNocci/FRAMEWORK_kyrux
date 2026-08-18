@@ -134,3 +134,58 @@ func TestRequireStaffSemSessaoRedireciona(t *testing.T) {
 		t.Errorf("esperava redirect (302) pro login, recebeu %d", rec.Code)
 	}
 }
+
+// TestRequireStaffCacheMantemNomeCompleto prova que o cache de staffCheck
+// (dentro do TTL) não derruba FirstName/LastName do usuário — sem isso,
+// b.User (nome ao lado do botão Sair) cairia pro username a cada
+// requisição em cache, mesmo com nome completo cadastrado.
+func TestRequireStaffCacheMantemNomeCompleto(t *testing.T) {
+	auth.SetDBEnabled(true)
+	defer auth.SetDBEnabled(false)
+
+	db, err := database.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("abrir sqlite: %v", err)
+	}
+	defer db.Close()
+	if err := orm.EnsureSQLiteTable[auth.User](db); err != nil {
+		t.Fatalf("criar tabela users: %v", err)
+	}
+
+	user := &auth.User{Username: "staffuser", FirstName: "Ana", LastName: "Silva", IsStaff: true, IsActive: true}
+	if err := user.SetPassword("senha12345678"); err != nil {
+		t.Fatalf("hash senha: %v", err)
+	}
+	if err := orm.Create(db, user); err != nil {
+		t.Fatalf("criar usuário: %v", err)
+	}
+
+	dbm := database.NewManager()
+	dbm.AddDB("default", db)
+	store := session.NewStore(time.Hour)
+	sess, err := store.New()
+	if err != nil {
+		t.Fatalf("criar sessão: %v", err)
+	}
+	sess.Set("user_id", user.ID)
+
+	guard := requireStaff(dbm, store, "/admin/")
+	var got *auth.User
+	handler := guard(func(ctx *router.Context) { got = ctxUser(ctx) })
+
+	doRequest := func() {
+		req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
+		req.AddCookie(&http.Cookie{Name: session.CookieName(), Value: sess.ID})
+		handler(&router.Context{Writer: httptest.NewRecorder(), Request: req})
+	}
+
+	doRequest() // 1ª chamada: SELECT real, popula o cache
+	if got.FullName() != "Ana Silva" {
+		t.Fatalf("1ª chamada (sem cache): esperava %q, recebeu %q", "Ana Silva", got.FullName())
+	}
+
+	doRequest() // 2ª chamada: dentro do TTL, vem do staffCheck cacheado
+	if got.FullName() != "Ana Silva" {
+		t.Errorf("2ª chamada (cache hit): esperava %q, recebeu %q — FirstName/LastName não sobreviveram ao cache", "Ana Silva", got.FullName())
+	}
+}

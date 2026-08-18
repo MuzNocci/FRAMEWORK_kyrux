@@ -46,6 +46,8 @@ var staffCheckTTL = 5 * time.Second
 type staffCheck struct {
 	UserID    int64
 	Username  string
+	FirstName string
+	LastName  string
 	IsStaff   bool
 	IsAdmin   bool
 	CheckedAt time.Time
@@ -84,6 +86,7 @@ type columnView struct {
 	SortURL    string
 	SortActive bool
 	SortDesc   bool
+	IsPK       bool
 }
 
 type formField struct {
@@ -236,7 +239,7 @@ func requireStaff(dbm *database.Manager, store *session.Store, basePath string) 
 			if hasSess {
 				if v, ok := sess.Get(staffCheckSessionKey); ok {
 					if c, ok2 := v.(*staffCheck); ok2 && time.Since(c.CheckedAt) < staffCheckTTL {
-						ctx.Set(userCtxKey, &auth.User{ID: c.UserID, Username: c.Username, IsStaff: c.IsStaff, IsAdmin: c.IsAdmin})
+						ctx.Set(userCtxKey, &auth.User{ID: c.UserID, Username: c.Username, FirstName: c.FirstName, LastName: c.LastName, IsStaff: c.IsStaff, IsAdmin: c.IsAdmin})
 						next(ctx)
 						return
 					}
@@ -253,6 +256,8 @@ func requireStaff(dbm *database.Manager, store *session.Store, basePath string) 
 				sess.Set(staffCheckSessionKey, &staffCheck{
 					UserID:    user.ID,
 					Username:  user.Username,
+					FirstName: user.FirstName,
+					LastName:  user.LastName,
 					IsStaff:   user.IsStaff,
 					IsAdmin:   user.IsAdmin,
 					CheckedAt: time.Now(),
@@ -319,6 +324,9 @@ func (s *site) base(ctx *router.Context, activeSlug, pageTitle string) baseData 
 	}
 	if user != nil {
 		b.User = user.Username
+		if name := user.FullName(); name != "" {
+			b.User = name
+		}
 	}
 	if sess, ok := session.FromRequest(ctx.Request, s.store); ok {
 		b.FlashError, b.FlashSuccess = popFlash(sess)
@@ -513,6 +521,7 @@ func (s *site) handleList(ctx *router.Context) {
 			SortURL:    buildURL(listPath, linkParams(map[string]string{"sort": col, "dir": nextDir})),
 			SortActive: active,
 			SortDesc:   active && sortDesc,
+			IsPK:       f.IsPK,
 		})
 	}
 

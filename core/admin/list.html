@@ -56,14 +56,14 @@
 <table class="table">
 <thead><tr>
   {{if .BulkActions}}<th><input type="checkbox" class="js-select-all"></th>{{end}}
-  {{range .Columns}}<th>{{if .SortURL}}<a href="{{.SortURL}}">{{.Label}}{{if .SortActive}}{{if .SortDesc}} &#8595;{{else}} &#8593;{{end}}{{end}}</a>{{else}}{{.Label}}{{end}}</th>{{end}}
+  {{range .Columns}}<th{{if .IsPK}} class="col-id"{{end}}>{{if .SortURL}}<a href="{{.SortURL}}">{{.Label}}{{if .SortActive}}{{if .SortDesc}} &#8595;{{else}} &#8593;{{end}}{{end}}</a>{{else}}{{.Label}}{{end}}</th>{{end}}
   <th></th>
 </tr></thead>
 <tbody>
 {{range $row := .Rows}}
 <tr>
   {{if $.BulkActions}}<td><input type="checkbox" name="ids" value="{{$row.PK}}" form="bulk-form" class="js-row-check"></td>{{end}}
-  {{range $col := $.Columns}}<td><a class="cell-link" href="{{$.BasePath}}{{$.Slug}}/{{$row.PK}}/">{{index $row.Values $col.Column}}</a></td>{{end}}
+  {{range $col := $.Columns}}<td{{if $col.IsPK}} class="col-id"{{end}}><a class="cell-link" href="{{$.BasePath}}{{$.Slug}}/{{$row.PK}}/">{{index $row.Values $col.Column}}</a></td>{{end}}
   <td class="actions">
     <form method="POST" action="{{$.BasePath}}{{$.Slug}}/{{$row.PK}}/excluir/" class="js-confirm-delete" style="display:inline">
       <input type="hidden" name="{{$.CSRFField}}" value="{{$.CSRFToken}}">

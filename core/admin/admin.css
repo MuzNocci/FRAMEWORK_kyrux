@@ -120,6 +120,7 @@ input[type=checkbox]:checked::after{
 .table td{padding:.6rem .9rem;border-bottom:1px solid var(--border);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
 .table tr:last-child td{border-bottom:none}
 .table td.actions{white-space:nowrap;width:1%}
+.table .col-id{max-width:150px;width:1%}
 .cell-link{color:inherit;display:block}
 .masked{color:var(--muted);font-style:italic}
 
