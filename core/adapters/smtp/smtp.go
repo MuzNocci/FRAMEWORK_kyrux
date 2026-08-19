@@ -116,7 +116,11 @@ func (c *Client) Send(ctx context.Context, msg kymail.Message) error {
 
 	if c.username != "" {
 		if ok, _ := client.Extension("AUTH"); ok {
-			auth := smtp.PlainAuth("", c.username, c.password, c.host)
+			// c.username aceita o mesmo formato "Nome <email>" de msg.From
+			// (é comum ser o mesmo valor, ex: MAIL_USER="Kyrux <no-reply@...>")
+			// — mas o AUTH PLAIN exige o endereço puro, daí o mesmo
+			// envelopeAddress usado no MAIL FROM logo abaixo.
+			auth := smtp.PlainAuth("", envelopeAddress(c.username), c.password, c.host)
 			if err := client.Auth(auth); err != nil {
 				return fmt.Errorf("smtp: autenticar: %w", err)
 			}

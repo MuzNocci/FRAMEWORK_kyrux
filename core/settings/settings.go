@@ -67,6 +67,11 @@ type MailSettings struct {
 	Enabled  bool
 	Host     string
 	Port     string // padrão "587" (STARTTLS); "465" usa TLS implícito automaticamente
+	// User é o remetente/login SMTP — aceita tanto o endereço puro quanto o
+	// formato "Nome <email>" (ex: "Kyrux <no-reply@kyrux.com.br>"), usado
+	// como está no cabeçalho From: das mensagens. Pra autenticação (AUTH
+	// PLAIN), o adapter SMTP extrai só o endereço — ver
+	// core/adapters/smtp.envelopeAddress.
 	User     string
 	Password string
 }
