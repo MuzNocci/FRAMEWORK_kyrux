@@ -108,7 +108,7 @@ func registerCRUD[T any](rm *registeredModel) {
 		v := reflect.ValueOf(&obj).Elem()
 		form := r.PostForm
 		for _, f := range rm.Fields {
-			if f.IsPK || f.IsAutoNow {
+			if f.IsPK || f.IsAutoNow || f.IsNanoID {
 				continue
 			}
 			if f.IsImage {
@@ -149,7 +149,7 @@ func registerCRUD[T any](rm *registeredModel) {
 		form := r.PostForm
 		values := make(map[string]any, len(rm.Fields))
 		for _, f := range rm.Fields {
-			if f.IsPK || f.IsAutoNow {
+			if f.IsPK || f.IsAutoNow || f.IsNanoID {
 				continue
 			}
 			if f.IsImage {

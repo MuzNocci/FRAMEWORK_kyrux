@@ -62,6 +62,7 @@ type adminField struct {
 	IsHash    bool
 	IsEncrypt bool
 	IsAutoNow bool
+	IsNanoID  bool
 	IsImage   bool
 	IsFK      bool
 	FKTable   string
@@ -282,6 +283,7 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 			IsHash:    f.IsHash,
 			IsEncrypt: f.IsEncrypt,
 			IsAutoNow: f.IsAutoNow,
+			IsNanoID:  f.IsNanoID,
 			IsImage:   f.IsImage,
 			IsFK:      f.FK != "",
 			FKTable:   f.FK,

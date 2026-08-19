@@ -664,7 +664,13 @@ func (s *site) formData(ctx *router.Context, db *database.DB, rm *registeredMode
 			IsHash:   f.IsHash,
 			IsImage:  f.IsImage,
 			IsFK:     f.IsFK,
-			ReadOnly: f.IsAutoNow,
+			// nanoid: sempre gerado pelo sistema (ver core/orm/nanoid.go),
+			// nunca digitável — inclusive na criação, diferente de autonow
+			// (que nem aparece no form de criação, já que também não existe
+			// ainda). O nanoid já existe conceitualmente antes do INSERT
+			// (só o valor que ainda não foi sorteado), então continua
+			// visível — só travado, mostrando "—" até ser gerado.
+			ReadOnly: f.IsAutoNow || f.IsNanoID,
 		}
 		if prefill != nil && !f.IsHash {
 			raw := prefill.Get(f.Column)
