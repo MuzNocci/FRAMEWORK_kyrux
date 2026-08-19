@@ -19,13 +19,20 @@
   <img src="/kyrux/statics/kyrux_wt.png" class="logo-img" alt="Kyrux">
   <span class="version">v{{.Version}}</span>
   <div class="header-right">
-    <a href="/" class="btn-back">&#8592; Voltar ao site</a>
     {{if .User}}
-    <span>{{.User}}</span>
-    <form method="POST" action="{{.BasePath}}logout/" style="display:inline">
-      <input type="hidden" name="{{.CSRFField}}" value="{{.CSRFToken}}">
-      <button type="submit" class="btn btn-ghost btn-sm">Sair</button>
-    </form>
+    <div class="admin-user-menu">
+      <button type="button" class="admin-avatar-btn js-admin-avatar-btn" aria-haspopup="true" aria-expanded="false">{{.UserInitials}}</button>
+      <div class="admin-avatar-dropdown js-admin-avatar-dropdown">
+        <div class="admin-avatar-dropdown-name">{{.User}}</div>
+        <a href="/" class="admin-avatar-dropdown-item">&#8592; Voltar ao site</a>
+        <form method="POST" action="{{.BasePath}}logout/">
+          <input type="hidden" name="{{.CSRFField}}" value="{{.CSRFToken}}">
+          <button type="submit" class="admin-avatar-dropdown-item admin-avatar-dropdown-logout">Sair</button>
+        </form>
+      </div>
+    </div>
+    {{else}}
+    <a href="/" class="btn-back">&#8592; Voltar ao site</a>
     {{end}}
   </div>
 </header>

@@ -74,6 +74,7 @@ type baseData struct {
 	FrameworkModels []navItem
 	AppModels       []navItem
 	User            string
+	UserInitials    string
 	CSRFField       string
 	CSRFToken       string
 	FlashError      string
@@ -327,11 +328,34 @@ func (s *site) base(ctx *router.Context, activeSlug, pageTitle string) baseData 
 		if name := user.FullName(); name != "" {
 			b.User = name
 		}
+		b.UserInitials = userInitials(user)
 	}
 	if sess, ok := session.FromRequest(ctx.Request, s.store); ok {
 		b.FlashError, b.FlashSuccess = popFlash(sess)
 	}
 	return b
+}
+
+// userInitials devolve o texto do círculo de avatar no header: iniciais de
+// nome+sobrenome, ou só a primeira letra de quem tiver apenas um dos dois —
+// inclusive o superusuário sem nome cadastrado, que cai na primeira letra do
+// Username. Indexação por rune (não por byte) evita cortar um caractere
+// acentuado ao meio.
+func userInitials(u *auth.User) string {
+	first := strings.TrimSpace(u.FirstName)
+	last := strings.TrimSpace(u.LastName)
+	switch {
+	case first != "" && last != "":
+		return strings.ToUpper(string([]rune(first)[:1]) + string([]rune(last)[:1]))
+	case first != "":
+		return strings.ToUpper(string([]rune(first)[:1]))
+	case last != "":
+		return strings.ToUpper(string([]rune(last)[:1]))
+	case u.Username != "":
+		return strings.ToUpper(string([]rune(u.Username)[:1]))
+	default:
+		return "?"
+	}
 }
 
 func setFlash(sess *session.Session, kind, msg string) {

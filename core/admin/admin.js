@@ -1,4 +1,27 @@
 document.addEventListener('DOMContentLoaded', function () {
+  // Avatar do usuário: clique abre/fecha o dropdown; clique fora ou Esc
+  // fecha. stopPropagation no botão evita que o próprio clique de abrir
+  // já dispare o listener de "clique fora" no mesmo evento.
+  var avatarBtn = document.querySelector('.js-admin-avatar-btn');
+  var avatarDropdown = document.querySelector('.js-admin-avatar-dropdown');
+  if (avatarBtn && avatarDropdown) {
+    function closeAvatarMenu() {
+      avatarDropdown.classList.remove('active');
+      avatarBtn.setAttribute('aria-expanded', 'false');
+    }
+    avatarBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var open = avatarDropdown.classList.toggle('active');
+      avatarBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.addEventListener('click', function (e) {
+      if (!avatarDropdown.contains(e.target)) closeAvatarMenu();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeAvatarMenu();
+    });
+  }
+
   document.querySelectorAll('.js-confirm-delete').forEach(function (f) {
     f.addEventListener('submit', function (e) {
       if (!confirm('Confirma a exclusão deste registro? Esta ação não pode ser desfeita.')) {

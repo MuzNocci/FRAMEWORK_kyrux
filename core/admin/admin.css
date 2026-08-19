@@ -30,6 +30,37 @@ header .version{font-size:.7rem;color:var(--muted);background:var(--border);padd
 .btn-back{display:inline-flex;align-items:center;gap:.35rem;padding:.45rem 1.1rem;border-radius:8px;font-size:.82rem;text-decoration:none;transition:border-color .2s,color .2s;background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
 .btn-back:hover{border-color:var(--go-blue);color:var(--text)}
 
+/* avatar do usuário no header: círculo com iniciais (sem foto cadastrada,
+   por ora só isso), clique abre um dropdown com nome/"voltar ao site"/sair —
+   substitui o antigo layout de "voltar ao site" + nome + botão sair soltos
+   direto no header. */
+.admin-user-menu{position:relative}
+.admin-avatar-btn{
+  width:36px;height:36px;border-radius:50%;flex-shrink:0;
+  background:var(--go-blue);color:#fff;border:none;cursor:pointer;
+  font-size:.8rem;font-weight:700;letter-spacing:.02em;
+  display:flex;align-items:center;justify-content:center;
+  transition:opacity .15s;
+}
+.admin-avatar-btn:hover{opacity:.85}
+.admin-avatar-dropdown{
+  display:none;flex-direction:column;gap:.15rem;
+  position:absolute;top:calc(100% + .6rem);right:0;min-width:200px;z-index:1100;
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 12px 32px rgba(0,0,0,.45);padding:.5rem;
+}
+.admin-avatar-dropdown.active{display:flex}
+.admin-avatar-dropdown-name{padding:.55rem .7rem .5rem;font-size:.82rem;font-weight:600;color:var(--text);border-bottom:1px solid var(--border);margin-bottom:.3rem}
+.admin-avatar-dropdown-item{
+  display:flex;align-items:center;gap:.5rem;width:100%;
+  padding:.55rem .7rem;border-radius:7px;font-size:.82rem;text-align:left;
+  color:var(--muted);background:transparent;border:none;cursor:pointer;font-family:inherit;
+  transition:background .15s,color .15s;
+}
+.admin-avatar-dropdown-item:hover{background:var(--bg);color:var(--text)}
+.admin-avatar-dropdown-logout{color:var(--red)}
+.admin-avatar-dropdown-logout:hover{background:rgba(248,81,73,.1);color:var(--red)}
+
 .admin-menu-btn{display:none;flex-direction:column;justify-content:center;align-items:center;gap:4px;width:34px;height:34px;flex-shrink:0;background:transparent;border:1px solid var(--border);border-radius:8px;cursor:pointer}
 .admin-menu-btn span{display:block;width:16px;height:2px;background:var(--text)}
 .admin-sidebar-overlay{display:none}
