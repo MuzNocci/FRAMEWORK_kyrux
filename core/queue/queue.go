@@ -45,6 +45,12 @@ const (
 	DefaultMaxRetries = 3
 
 	redisListKey = "kyrux:queue:tasks"
+
+	// redisBRPopTimeout é quanto cada worker fica bloqueado por ciclo
+	// esperando um item novo na lista (BRPOP volta com redis.Nil se ninguém
+	// enfileirar nesse intervalo, e o worker tenta de novo). O ReadTimeout do
+	// client precisa ficar folgadamente acima disso — ver NewRedis.
+	redisBRPopTimeout = 2 * time.Second
 )
 
 // Handler processa o payload de uma tarefa. Erro ≠ nil provoca retry
@@ -124,7 +130,24 @@ func NewRedis(addr, password string, workers, maxLen int) (*Queue, error) {
 		maxLen = DefaultBufferSize
 	}
 
-	rdb := redis.NewClient(&redis.Options{Addr: addr, Password: password, MaxRetries: -1})
+	// ReadTimeout precisa ficar bem acima de redisBRPopTimeout: o BRPOP dos
+	// workers fica bloqueado no servidor por até redisBRPopTimeout esperando
+	// item novo, e se o ReadTimeout do client for menor (ou só um pouco
+	// maior — o default do go-redis é 3s, folga de só 1s sobre os 2s do
+	// BRPOP) o socket estoura o prazo ANTES do servidor responder,
+	// derrubando a conexão como "i/o timeout" em praticamente todo ciclo.
+	// Isso não é só log poluído: a reconexão constante consome o pool de
+	// conexões compartilhado com o Enqueue() do caminho HTTP, atrasando (ou
+	// travando) o enfileiramento de quem só queria mandar e-mail em
+	// background — o sintoma observado foi candidatura em Carreiras
+	// demorando até estourar 502 no proxy, quando devia ser instantâneo.
+	readTimeout := redisBRPopTimeout + 5*time.Second
+	rdb := redis.NewClient(&redis.Options{
+		Addr:        addr,
+		Password:    password,
+		MaxRetries:  -1,
+		ReadTimeout: readTimeout,
+	})
 	pingCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
@@ -257,7 +280,7 @@ func (q *Queue) worker() {
 func (q *Queue) redisWorker() {
 	defer q.wg.Done()
 	for {
-		res, err := q.redis.BRPop(q.workerCtx, 2*time.Second, redisListKey).Result()
+		res, err := q.redis.BRPop(q.workerCtx, redisBRPopTimeout, redisListKey).Result()
 		if err != nil {
 			if q.workerCtx.Err() != nil {
 				return // Close() cancelou o contexto
