@@ -53,6 +53,35 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   }
 
+  // Menu mobile: sidebar vira um drawer off-canvas abaixo de 800px, aberto
+  // pelo botão hamburguer e fechado pelo overlay, tecla Esc, ou ao navegar
+  // (clique em qualquer link dentro do drawer).
+  var menuBtn = document.querySelector('.js-admin-menu-btn');
+  var sidebar = document.getElementById('admin-sidebar');
+  var overlay = document.querySelector('.js-admin-sidebar-overlay');
+  if (menuBtn && sidebar && overlay) {
+    function closeMenu() {
+      sidebar.classList.remove('active');
+      overlay.classList.remove('active');
+      menuBtn.setAttribute('aria-expanded', 'false');
+    }
+    function openMenu() {
+      sidebar.classList.add('active');
+      overlay.classList.add('active');
+      menuBtn.setAttribute('aria-expanded', 'true');
+    }
+    menuBtn.addEventListener('click', function () {
+      if (sidebar.classList.contains('active')) closeMenu(); else openMenu();
+    });
+    overlay.addEventListener('click', closeMenu);
+    sidebar.querySelectorAll('a').forEach(function (a) {
+      a.addEventListener('click', closeMenu);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeMenu();
+    });
+  }
+
   // Pré-visualização do campo de imagem (kyrux:"image") assim que um
   // arquivo é escolhido — antes do upload, só lendo o arquivo local.
   document.querySelectorAll('.js-image-input').forEach(function (input) {

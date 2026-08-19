@@ -11,6 +11,11 @@
 </head>
 <body>
 <header>
+  {{if .User}}
+  <button type="button" class="admin-menu-btn js-admin-menu-btn" aria-label="Abrir menu" aria-expanded="false" aria-controls="admin-sidebar">
+    <span></span><span></span><span></span>
+  </button>
+  {{end}}
   <img src="/kyrux/statics/kyrux_wt.png" class="logo-img" alt="Kyrux">
   <span class="version">v{{.Version}}</span>
   <div class="header-right">
@@ -26,7 +31,8 @@
 </header>
 {{if .User}}
 <div class="admin-shell">
-  <nav class="admin-sidebar">
+  <div class="admin-sidebar-overlay js-admin-sidebar-overlay"></div>
+  <nav class="admin-sidebar" id="admin-sidebar">
     <a href="{{.BasePath}}" class="admin-nav-block admin-nav-block-link{{if eq "" .ActiveSlug}} active{{end}}">
       <svg class="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"></rect><rect x="14" y="3" width="7" height="5" rx="1"></rect><rect x="14" y="12" width="7" height="9" rx="1"></rect><rect x="3" y="16" width="7" height="5" rx="1"></rect></svg>
       Dashboard

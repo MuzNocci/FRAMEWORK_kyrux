@@ -30,6 +30,10 @@ header .version{font-size:.7rem;color:var(--muted);background:var(--border);padd
 .btn-back{display:inline-flex;align-items:center;gap:.35rem;padding:.45rem 1.1rem;border-radius:8px;font-size:.82rem;text-decoration:none;transition:border-color .2s,color .2s;background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
 .btn-back:hover{border-color:var(--go-blue);color:var(--text)}
 
+.admin-menu-btn{display:none;flex-direction:column;justify-content:center;align-items:center;gap:4px;width:34px;height:34px;flex-shrink:0;background:transparent;border:1px solid var(--border);border-radius:8px;cursor:pointer}
+.admin-menu-btn span{display:block;width:16px;height:2px;background:var(--text)}
+.admin-sidebar-overlay{display:none}
+
 .admin-shell{flex:1;display:flex;min-height:0}
 .admin-sidebar{width:240px;flex-shrink:0;border-right:1px solid var(--border);padding:1rem .85rem;overflow-y:auto;display:flex;flex-direction:column;gap:.85rem}
 
@@ -159,4 +163,39 @@ footer{border-top:1px solid var(--border);padding:.75rem 2rem;text-align:center;
 footer a{color:var(--go-blue);text-decoration:none}
 footer a:hover{text-decoration:underline}
 
-@media(max-width:800px){.admin-sidebar{display:none}main{padding:1.25rem}.form-shell{max-width:100%}.page-head{flex-direction:column;align-items:flex-start}}
+@media(max-width:800px){
+  header{padding:.75rem 1rem;flex-wrap:wrap}
+  .header-right{gap:.6rem;font-size:.75rem}
+  .admin-menu-btn{display:flex}
+
+  /* sidebar vira um drawer off-canvas (mesmo padrão do menu mobile do
+     site): fixo, fora da tela por padrão, desliza com .active. O overlay
+     escurece o resto da página e fecha o drawer ao ser tocado. */
+  .admin-sidebar{
+    position:fixed;top:0;left:0;bottom:0;z-index:1000;background:var(--bg);
+    transform:translateX(-100%);transition:transform .25s ease;
+    box-shadow:4px 0 24px rgba(0,0,0,.5);width:min(80vw,280px)
+  }
+  .admin-sidebar.active{transform:translateX(0)}
+  .admin-sidebar-overlay{
+    display:block;position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.55);
+    opacity:0;pointer-events:none;transition:opacity .25s
+  }
+  .admin-sidebar-overlay.active{opacity:1;pointer-events:auto}
+
+  main{padding:1.25rem}
+  .form-shell{max-width:100%}
+  .page-head{flex-direction:column;align-items:flex-start}
+
+  .toolbar{flex-direction:column;align-items:stretch}
+  .search-input{min-width:0;width:100%}
+  .filter-field{width:100%}
+  .filter-field input,.filter-field select{flex:1;min-width:0}
+  .filter-range-input{width:100%}
+  .bulk-bar{flex-wrap:wrap}
+
+  .btn-sm{padding:.42rem .85rem}
+  .table td,.table th{padding:.55rem .65rem}
+
+  .admin-image-preview{max-width:100%}
+}
