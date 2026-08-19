@@ -17,6 +17,7 @@ type Field struct {
 	IsHash    bool // kyrux:"hash"    — auto-hash Argon2id na escrita
 	IsEncrypt bool // kyrux:"encrypt" — auto-cifra AES-256-GCM na escrita, decifra na leitura
 	IsAutoNow bool // kyrux:"autonow" — CURRENT_TIMESTAMP automático em todo Update (ex: updated_at)
+	IsNanoID  bool // kyrux:"nanoid"  — string aleatória única gerada no INSERT quando o campo está vazio; tamanho vem de size:N (padrão 21)
 	Unique    bool // kyrux:"unique"  — usado por migrations e pelo DDL automático do fallback SQLite
 	FTS       bool // kyrux:"fts"     — busca full-text nativa (Query.Search); índice gerado por migrations
 	IsImage   bool // kyrux:"image"   — admin exibe input de upload; arquivo vai para medias/<app>/<tabela>/
@@ -95,6 +96,8 @@ func buildMeta(t reflect.Type) *ModelMeta {
 				f.IsEncrypt = true
 			case part == "autonow":
 				f.IsAutoNow = true
+			case part == "nanoid":
+				f.IsNanoID = true
 			case part == "unique":
 				f.Unique = true
 			case part == "fts":

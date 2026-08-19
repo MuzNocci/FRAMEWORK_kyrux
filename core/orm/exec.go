@@ -57,6 +57,19 @@ func rowValues(meta *ModelMeta, v reflect.Value) (phs []string, args []any, err 
 		}
 		val := v.Field(f.GoIndex).Interface()
 
+		// nanoid: gerado em Go (não dá pra ser um default SQL, precisa do
+		// alfabeto do NanoID) — só quando o campo ainda está vazio, pra não
+		// sobrescrever um valor que o caller já tenha preenchido na mão.
+		// Grava de volta no struct do caller (igual ao PK após o INSERT)
+		// pra quem chamou Create já sair com o ID gerado em mãos.
+		if f.IsNanoID {
+			if s, ok := val.(string); ok && s == "" {
+				generated := generateNanoID(f.Size)
+				v.Field(f.GoIndex).SetString(generated)
+				val = generated
+			}
+		}
+
 		// Zero value com default definido (inclui autonow): usa o default SQL.
 		if f.Default != "" && isZeroValue(val) {
 			phs = append(phs, f.Default)
