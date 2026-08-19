@@ -107,6 +107,36 @@ func fetchFKOptions(db *database.DB, table, labelCol string) ([]fkOption, error)
 	return opts, rows.Err()
 }
 
+// resolveFKLabelsForList substitui, em cada linha de rows, o valor bruto
+// (id numérico) de todo campo kyrux:"fk:..." com fklabel configurado pelo
+// rótulo correspondente — a mesma resolução usada no <select> do formulário,
+// aplicada agora também às colunas da listagem. Um id sem opção
+// correspondente (registro relacionado apagado, ou além do fkOptionsLimit)
+// mantém o id bruto como fallback. Roda uma query extra por campo FK
+// rotulado, uma vez por página da listagem — aceitável no admin (baixo
+// tráfego), no mesmo espírito de fetchFKOptions no formulário.
+func resolveFKLabelsForList(db *database.DB, fields []adminField, rows []adminRow) error {
+	for _, f := range fields {
+		if !f.IsFK || f.FKLabel == "" {
+			continue
+		}
+		opts, err := fetchFKOptions(db, f.FKTable, f.FKLabel)
+		if err != nil {
+			return err
+		}
+		byID := make(map[string]string, len(opts))
+		for _, o := range opts {
+			byID[o.Value] = o.Label
+		}
+		for i := range rows {
+			if label, ok := byID[rows[i].Values[f.Column]]; ok {
+				rows[i].Values[f.Column] = label
+			}
+		}
+	}
+	return nil
+}
+
 // cellToString converte o valor bruto devolvido pelo driver SQL (int64,
 // float64, []byte, string, nil, ...) para exibição — []byte precisa de
 // conversão explícita, senão vira uma lista de bytes em vez de texto.

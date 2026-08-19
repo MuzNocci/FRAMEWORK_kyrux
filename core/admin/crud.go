@@ -82,6 +82,9 @@ func registerCRUD[T any](rm *registeredModel) {
 		for i := range p.Items {
 			rows[i] = rowFromStruct(reflect.ValueOf(&p.Items[i]).Elem(), rm.Fields, rm.pkColumn)
 		}
+		if err := resolveFKLabelsForList(db, rm.Fields, rows); err != nil {
+			return nil, false, err
+		}
 		return rows, p.HasNext, nil
 	}
 
