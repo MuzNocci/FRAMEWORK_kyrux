@@ -38,7 +38,7 @@ type HistoryLog struct {
 	Changes   string    `kyrux:"column:changes"`
 	UserID    int64     `kyrux:"column:user_id"`
 	Username  string    `kyrux:"size:150"`
-	CreatedAt time.Time `kyrux:"column:created_at,autonow"`
+	CreatedAt time.Time `kyrux:"column:created_at,autonow_add"`
 }
 
 // historyActor identifica quem fez a ação, pra preencher HistoryLog.UserID/

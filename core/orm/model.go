@@ -11,20 +11,21 @@ import (
 
 // Field descreve um campo do struct mapeado a uma coluna SQL.
 type Field struct {
-	Name      string
-	Column    string
-	IsPK      bool
-	IsHash    bool // kyrux:"hash"    — auto-hash Argon2id na escrita
-	IsEncrypt bool // kyrux:"encrypt" — auto-cifra AES-256-GCM na escrita, decifra na leitura
-	IsAutoNow bool // kyrux:"autonow" — CURRENT_TIMESTAMP automático em todo Update (ex: updated_at)
-	IsNanoID  bool // kyrux:"nanoid"  — string aleatória única gerada no INSERT quando o campo está vazio; tamanho vem de size:N (padrão 21)
-	Unique    bool // kyrux:"unique"  — usado por migrations e pelo DDL automático do fallback SQLite
-	FTS       bool // kyrux:"fts"     — busca full-text nativa (Query.Search); índice gerado por migrations
-	IsImage   bool // kyrux:"image"   — admin exibe input de upload; arquivo vai para medias/<app>/<tabela>/
-	GoIndex   int
-	Size      int    // kyrux:"size:N" — usado por migrations
-	Default   string // kyrux:"default:value" — valor padrão SQL se campo for vazio
-	FK        string // kyrux:"fk:tabela" — REFERENCES tabela(id) na migration
+	Name         string
+	Column       string
+	IsPK         bool
+	IsHash       bool // kyrux:"hash"    — auto-hash Argon2id na escrita
+	IsEncrypt    bool // kyrux:"encrypt" — auto-cifra AES-256-GCM na escrita, decifra na leitura
+	IsAutoNow    bool // kyrux:"autonow"     — CURRENT_TIMESTAMP automático em todo Update (ex: updated_at)
+	IsAutoNowAdd bool // kyrux:"autonow_add" — CURRENT_TIMESTAMP só no INSERT, nunca tocado depois (ex: created_at)
+	IsNanoID     bool // kyrux:"nanoid"  — string aleatória única gerada no INSERT quando o campo está vazio; tamanho vem de size:N (padrão 21)
+	Unique       bool // kyrux:"unique"  — usado por migrations e pelo DDL automático do fallback SQLite
+	FTS          bool // kyrux:"fts"     — busca full-text nativa (Query.Search); índice gerado por migrations
+	IsImage      bool // kyrux:"image"   — admin exibe input de upload; arquivo vai para medias/<app>/<tabela>/
+	GoIndex      int
+	Size         int    // kyrux:"size:N" — usado por migrations
+	Default      string // kyrux:"default:value" — valor padrão SQL se campo for vazio
+	FK           string // kyrux:"fk:tabela" — REFERENCES tabela(id) na migration
 	// FKLabel: coluna (ou colunas, separadas por "+") usada como rótulo no
 	// <select> do admin — padrão: mostra o id. Cada parte é "coluna" (do
 	// próprio model referenciado) ou "tabela.coluna" (segue o FK do model
@@ -96,6 +97,8 @@ func buildMeta(t reflect.Type) *ModelMeta {
 				f.IsEncrypt = true
 			case part == "autonow":
 				f.IsAutoNow = true
+			case part == "autonow_add":
+				f.IsAutoNowAdd = true
 			case part == "nanoid":
 				f.IsNanoID = true
 			case part == "unique":
@@ -116,8 +119,11 @@ func buildMeta(t reflect.Type) *ModelMeta {
 				f.FKLabel = strings.TrimPrefix(part, "fklabel:")
 			}
 		}
-		// autonow implica preenchimento no INSERT quando o campo está zerado.
-		if f.IsAutoNow && f.Default == "" {
+		// autonow/autonow_add implicam preenchimento no INSERT quando o
+		// campo está zerado — a diferença entre os dois é só no Update
+		// (ver Query.Update em query.go): autonow_add nunca é tocado de
+		// novo depois do INSERT.
+		if (f.IsAutoNow || f.IsAutoNowAdd) && f.Default == "" {
 			f.Default = "CURRENT_TIMESTAMP"
 		}
 

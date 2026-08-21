@@ -51,22 +51,23 @@ var timeType = reflect.TypeOf(time.Time{})
 // adminField descreve um campo do model para fins de exibição/edição no admin.
 // Construído uma única vez em Register, a partir de orm.MetaOf + reflection.
 type adminField struct {
-	GoName    string
-	Column    string
-	Label     string // nome humanizado, ex: "Criado Em"
-	GoIndex   int
-	Kind      reflect.Kind // tipo Go real do campo (ponteiro já desembrulhado) — usado para converter valores de filtro (FilterFields) para o tipo certo da coluna
-	Widget    string       // "text" | "number" | "number-float" | "checkbox" | "datetime" | "password" | "file" | "select"
-	Optional  bool         // campo é ponteiro (*T) — em branco vira nil/NULL
-	IsPK      bool
-	IsHash    bool
-	IsEncrypt bool
-	IsAutoNow bool
-	IsNanoID  bool
-	IsImage   bool
-	IsFK      bool
-	FKTable   string
-	FKLabel   string // coluna do model relacionado usada como rótulo; vazio = mostra o id
+	GoName       string
+	Column       string
+	Label        string // nome humanizado, ex: "Criado Em"
+	GoIndex      int
+	Kind         reflect.Kind // tipo Go real do campo (ponteiro já desembrulhado) — usado para converter valores de filtro (FilterFields) para o tipo certo da coluna
+	Widget       string       // "text" | "number" | "number-float" | "checkbox" | "datetime" | "password" | "file" | "select"
+	Optional     bool         // campo é ponteiro (*T) — em branco vira nil/NULL
+	IsPK         bool
+	IsHash       bool
+	IsEncrypt    bool
+	IsAutoNow    bool
+	IsAutoNowAdd bool
+	IsNanoID     bool
+	IsImage      bool
+	IsFK         bool
+	FKTable      string
+	FKLabel      string // coluna do model relacionado usada como rótulo; vazio = mostra o id
 }
 
 // registeredModel é a representação type-erased de um Register[T] — as
@@ -272,22 +273,23 @@ func buildAdminFields(meta *orm.ModelMeta, t reflect.Type) []adminField {
 		}
 		widget, optional := detectWidget(sf.Type, f.IsHash, f.IsImage, f.FK != "", f.Size)
 		fields = append(fields, adminField{
-			GoName:    f.Name,
-			Column:    f.Column,
-			Label:     humanize(f.Column),
-			GoIndex:   f.GoIndex,
-			Kind:      underlyingKind(sf.Type),
-			Widget:    widget,
-			Optional:  optional,
-			IsPK:      f.IsPK,
-			IsHash:    f.IsHash,
-			IsEncrypt: f.IsEncrypt,
-			IsAutoNow: f.IsAutoNow,
-			IsNanoID:  f.IsNanoID,
-			IsImage:   f.IsImage,
-			IsFK:      f.FK != "",
-			FKTable:   f.FK,
-			FKLabel:   f.FKLabel,
+			GoName:       f.Name,
+			Column:       f.Column,
+			Label:        humanize(f.Column),
+			GoIndex:      f.GoIndex,
+			Kind:         underlyingKind(sf.Type),
+			Widget:       widget,
+			Optional:     optional,
+			IsPK:         f.IsPK,
+			IsHash:       f.IsHash,
+			IsEncrypt:    f.IsEncrypt,
+			IsAutoNow:    f.IsAutoNow,
+			IsAutoNowAdd: f.IsAutoNowAdd,
+			IsNanoID:     f.IsNanoID,
+			IsImage:      f.IsImage,
+			IsFK:         f.FK != "",
+			FKTable:      f.FK,
+			FKLabel:      f.FKLabel,
 		})
 	}
 	return fields

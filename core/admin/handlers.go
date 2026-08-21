@@ -654,23 +654,23 @@ func (s *site) formData(ctx *router.Context, db *database.DB, rm *registeredMode
 		if f.IsPK {
 			continue
 		}
-		if f.IsAutoNow && !isEdit {
-			continue // autonow não existe ainda na criação — nada a mostrar
+		if (f.IsAutoNow || f.IsAutoNowAdd) && !isEdit {
+			continue // autonow/autonow_add não existem ainda na criação — nada a mostrar
 		}
 		ff := formField{
-			Column:   f.Column,
-			Label:    f.Label,
-			Widget:   f.Widget,
-			IsHash:   f.IsHash,
-			IsImage:  f.IsImage,
-			IsFK:     f.IsFK,
+			Column:  f.Column,
+			Label:   f.Label,
+			Widget:  f.Widget,
+			IsHash:  f.IsHash,
+			IsImage: f.IsImage,
+			IsFK:    f.IsFK,
 			// nanoid: sempre gerado pelo sistema (ver core/orm/nanoid.go),
 			// nunca digitável — inclusive na criação, diferente de autonow
 			// (que nem aparece no form de criação, já que também não existe
 			// ainda). O nanoid já existe conceitualmente antes do INSERT
 			// (só o valor que ainda não foi sorteado), então continua
 			// visível — só travado, mostrando "—" até ser gerado.
-			ReadOnly: f.IsAutoNow || f.IsNanoID,
+			ReadOnly: f.IsAutoNow || f.IsAutoNowAdd || f.IsNanoID,
 		}
 		if prefill != nil && !f.IsHash {
 			raw := prefill.Get(f.Column)
