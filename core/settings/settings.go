@@ -33,6 +33,15 @@ type AppSettings struct {
 	// domínio (Sitemap/Canonical omitidos), o que ainda é válido mas
 	// incompleto — configure antes de ir pra produção.
 	URL string
+
+	// Timezone é o nome IANA (ex: "America/Sao_Paulo") usado pelo admin
+	// pra EXIBIR timestamps automáticos (created_at/updated_at, histórico)
+	// convertidos do UTC gravado no banco — não afeta o que é gravado
+	// (colunas TIMESTAMPTZ guardam o instante absoluto, fuso-independente).
+	// Padrão "UTC" se APP_TIMEZONE não estiver definida. Resolvido em
+	// bootstrap.Init via time.LoadLocation — nome inválido cai pra UTC
+	// com um aviso no log, nunca derruba o boot.
+	Timezone string
 }
 
 type ServerSettings struct {
@@ -64,9 +73,9 @@ type QueueSettings struct {
 }
 
 type MailSettings struct {
-	Enabled  bool
-	Host     string
-	Port     string // padrão "587" (STARTTLS); "465" usa TLS implícito automaticamente
+	Enabled bool
+	Host    string
+	Port    string // padrão "587" (STARTTLS); "465" usa TLS implícito automaticamente
 	// User é o remetente/login SMTP — aceita tanto o endereço puro quanto o
 	// formato "Nome <email>" (ex: "Kyrux <no-reply@kyrux.com.br>"), usado
 	// como está no cabeçalho From: das mensagens. Pra autenticação (AUTH
@@ -153,11 +162,12 @@ func Load() *Settings {
 	s := &Settings{
 		InstalledApps: InstalledApps,
 		App: AppSettings{
-			Name:    "KYRUX",
-			Version: "0.7.52 (Beta)",
-			Env:     env,
-			Debug:   env == "development",
-			URL:     strings.TrimSuffix(environment.Get("APP_URL"), "/"),
+			Name:     "KYRUX",
+			Version:  "0.7.52 (Beta)",
+			Env:      env,
+			Debug:    env == "development",
+			URL:      strings.TrimSuffix(environment.Get("APP_URL"), "/"),
+			Timezone: environment.GetOr("APP_TIMEZONE", "UTC"),
 		},
 		Server: ServerSettings{
 			Host:    environment.GetOr("SERVER_HOST", "127.0.0.1"),

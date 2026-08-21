@@ -295,7 +295,7 @@ func formatDisplayValue(fv reflect.Value, f adminField) string {
 			if t.IsZero() {
 				return ""
 			}
-			return t.Format("2006-01-02 15:04")
+			return t.In(timezone).Format("2006-01-02 15:04")
 		}
 	}
 	return fmt.Sprintf("%v", fv.Interface())
@@ -319,7 +319,7 @@ func formatInputValue(fv reflect.Value, f adminField) string {
 		if t.IsZero() {
 			return ""
 		}
-		return t.Format("2006-01-02T15:04")
+		return t.In(timezone).Format("2006-01-02T15:04")
 	}
 	return formatDisplayValue(fv, adminField{})
 }

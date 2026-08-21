@@ -258,7 +258,7 @@ func (s *site) handleHistory(ctx *router.Context) {
 			Action:    e.Action,
 			Changes:   formatChanges(e.Changes),
 			Username:  e.Username,
-			CreatedAt: e.CreatedAt.Format("2006-01-02 15:04"),
+			CreatedAt: e.CreatedAt.In(timezone).Format("2006-01-02 15:04"),
 		})
 	}
 

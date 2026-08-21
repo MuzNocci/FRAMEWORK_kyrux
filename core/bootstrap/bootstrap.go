@@ -58,6 +58,13 @@ type Framework struct {
 
 	Auth     *auth.Authenticator
 	Sessions *session.Store
+
+	// Timezone é o fuso resolvido de APP_TIMEZONE (padrão UTC, ou UTC se o
+	// nome configurado for inválido) — disponível para qualquer app exibir
+	// datas/horas convertidas; o admin já usa (ver admin.SetTimezone). Nunca
+	// afeta o que é gravado no banco (colunas TIMESTAMPTZ guardam o
+	// instante absoluto, fuso-independente).
+	Timezone *time.Location
 }
 
 func Init(envPath string) (*Framework, error) {
@@ -77,6 +84,16 @@ func Init(envPath string) (*Framework, error) {
 	session.SetSecureDefault(!cfg.App.Debug)
 	secmiddleware.SetTrustedProxyHeader(cfg.Security.TrustedProxy)
 	secmiddleware.SetCSP(cfg.Security.CSPPolicy) // vazio (CSP_POLICY não definida) mantém secmiddleware.DefaultCSP
+
+	// APP_TIMEZONE só afeta EXIBIÇÃO (admin.SetTimezone) — nome inválido
+	// não derruba o boot (diferente de SECRET_KEY/PASSWORD_PEPPER, que são
+	// segurança): só avisa e cai para UTC.
+	tz, err := time.LoadLocation(cfg.App.Timezone)
+	if err != nil {
+		log.Printf("bootstrap: APP_TIMEZONE %q inválido (%v) — usando UTC\n", cfg.App.Timezone, err)
+		tz = time.UTC
+	}
+	admin.SetTimezone(tz)
 
 	if !cfg.App.Debug {
 		if cfg.Security.SecretKey == "change-me" {
@@ -159,6 +176,7 @@ func Init(envPath string) (*Framework, error) {
 		DB:       dbm,
 		Auth:     a,
 		Sessions: store,
+		Timezone: tz,
 	}
 
 	if cfg.Cache.Enabled {

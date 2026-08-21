@@ -195,11 +195,24 @@ var (
 	order      []string // ordem de registro, para a navegação lateral
 )
 
+// timezone é usado para EXIBIR (nunca gravar) timestamps automáticos no
+// admin — listagem, formulário e histórico. Padrão UTC até bootstrap.Init
+// chamar SetTimezone com o fuso resolvido de APP_TIMEZONE.
+var timezone = time.UTC
+
+// SetTimezone define o fuso usado para exibir timestamps no admin —
+// chamado uma vez por bootstrap.Init, nunca pelo código do app.
+func SetTimezone(loc *time.Location) { timezone = loc }
+
 // Register registra o model T no admin sob o slug informado (usado na URL:
-// /admin/<slug>/); label é o nome exibido na navegação. Deve ser chamado no
-// Register() do app — nunca em runtime de request — antes do bootstrap
-// montar as rotas (admin.Mount). Faz panic em configuração inválida (slug
-// duplicado/reservado, ausência de PK): erro de programação, falha no boot.
+// /admin/<slug>/); label é o nome exibido na navegação. Padrão recomendado:
+// um func init() logo abaixo do struct do model, em models.go (Go garante
+// que todo init() roda antes de admin.Mount, chamado só depois que todos os
+// apps já registraram os seus). Único caso que não segue esse padrão é
+// auth.User (core/security/auth) — core/admin já importa esse pacote, então
+// o inverso seria import cycle; fica registrado no Register() do app. Faz
+// panic em configuração inválida (slug duplicado/reservado, ausência de
+// PK): erro de programação, falha no boot.
 func Register[T any](slug, label string, opts ...Option) {
 	if !reSlug.MatchString(slug) {
 		panic(fmt.Sprintf("admin: slug inválido %q — use minúsculas, dígitos e hífen, começando por letra", slug))

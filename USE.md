@@ -111,6 +111,12 @@ projeto/
 # production  → modo otimizado, debug desligado
 APP_ENV=development
 
+# Fuso horário (nome IANA) usado pelo admin para EXIBIR timestamps
+# automáticos (created_at/updated_at, histórico) — nunca afeta o que é
+# gravado no banco. Padrão UTC se ausente; nome inválido cai pra UTC com
+# aviso no log, não derruba o boot.
+# APP_TIMEZONE=America/Sao_Paulo
+
 # ── Servidor ──────────────────────────────────────────────────────
 SERVER_HOST=0.0.0.0     # bind — veja a nota abaixo antes de abrir no navegador
 SERVER_PORT=8000
@@ -2098,19 +2104,38 @@ ADMIN_PATH=/admin/    # opcional — renomear dificulta descoberta por scanners
 ```
 
 ```go
-// No Register() do app, depois de importar o model:
+// Em models.go, logo abaixo do struct — não em routes.go. admin.Register
+// não depende de r/fw (só faz reflection sobre o struct e guarda metadados
+// num registry interno), então roda de dentro de um func init() comum,
+// junto do próprio model:
+package models
+
 import "kyrux/core/admin"
 
-func Register(r *router.Router, fw *bootstrap.Framework) {
-    // ...
+type Produto struct {
+    ID    int64   `kyrux:"pk"`
+    Nome  string  `kyrux:"size:255"`
+    Preco float64
+}
 
-    admin.Register[models.Produto]("produtos", "Produtos",
+func init() {
+    admin.Register[Produto]("produtos", "Produtos",
         admin.SearchFields("Nome"),        // opcional — campos de busca (LIKE)
         admin.ListFields("Nome", "Preco"), // opcional — colunas da listagem
         admin.Conn("analytics"),           // opcional — outra conexão nomeada
     )
 }
 ```
+
+Go garante que todo `init()` do programa roda antes de `main()` começar —
+muito antes de `admin.Mount`, que só monta depois que todos os apps já
+registraram os seus (via `bootstrap.RegisterApp`). Não há risco de ordem.
+
+> **Exceção:** um model que já vive dentro de um pacote que `core/admin`
+> importa (caso de `auth.User`, em `core/security/auth` — `core/admin` já
+> importa esse pacote para login/sessão) não pode se auto-registrar assim:
+> seria import cycle. Nesse caso, registre no `Register(r, fw)` do app,
+> como antes.
 
 `Register[T]` exige que o model tenha um campo `kyrux:"pk"` — falha no boot
 (panic) se não tiver, junto com slug inválido/duplicado/reservado (`login`,
@@ -2158,12 +2183,12 @@ type Produto struct {
     Nome  string `kyrux:"size:255"`
     Capa  string `kyrux:"size:500,image"` // vira <input type="file"> no admin
 }
-```
 
-```go
-admin.Register[models.Produto]("produtos", "Produtos",
-    admin.App("catalogo"), // obrigatório para todo model com campo image
-)
+func init() {
+    admin.Register[Produto]("produtos", "Produtos",
+        admin.App("catalogo"), // obrigatório para todo model com campo image
+    )
+}
 ```
 
 - O arquivo é salvo em `medias/<app>/<tabela>/<nome-único>` (na raiz do
