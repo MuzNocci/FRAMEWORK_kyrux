@@ -205,6 +205,11 @@ var secureDefault atomic.Bool
 // Chamado no bootstrap; em produção deve ser true.
 func SetSecureDefault(v bool) { secureDefault.Store(v) }
 
+// SecureDefault expõe o valor atual pra outros cookies da aplicação (ex.:
+// locale, admin logout) que precisam da mesma regra Secure sem duplicar a
+// leitura da config de debug.
+func SecureDefault() bool { return secureDefault.Load() }
+
 // SetCookie define o cookie de sessão com as flags de segurança corretas.
 // A flag Secure efetiva é secure OU o padrão do bootstrap (SetSecureDefault) —
 // assim `session.SetCookie(w, id, r.TLS != nil)` continua correto atrás de proxy.

@@ -427,7 +427,15 @@ func (s *site) handleLoginSubmit(ctx *router.Context) {
 	if err != nil || !(user.IsStaff || user.IsAdmin) {
 		// Login válido não implica acesso ao admin — desfaz a sessão recém-criada.
 		s.store.Delete(sess.ID)
-		http.SetCookie(ctx.Writer, &http.Cookie{Name: session.CookieName(), Value: "", MaxAge: -1, Path: "/"})
+		http.SetCookie(ctx.Writer, &http.Cookie{
+			Name:     session.CookieName(),
+			Value:    "",
+			MaxAge:   -1,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   session.SecureDefault(),
+			SameSite: http.SameSiteStrictMode,
+		})
 		s.renderLoginError(ctx, loginValue, "Sua conta não tem permissão para acessar o admin.")
 		return
 	}

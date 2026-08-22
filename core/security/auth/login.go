@@ -189,6 +189,7 @@ func Logout(store *session.Store, r *http.Request, w http.ResponseWriter) {
 		Value:    "",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   session.SecureDefault(),
 		SameSite: http.SameSiteStrictMode,
 		Path:     "/",
 	})

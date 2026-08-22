@@ -17,13 +17,26 @@ import (
 )
 
 const (
-	cookieName = "kyrux_csrf"
-	fieldName  = "kyrux_csrf_token"
-	headerName = "X-CSRF-Token"
-	tokenLen   = 32
-	rawKey     = "csrf_raw"   // token bruto (cookie) — colocado pelo middleware
-	contextKey = "csrf_token" // token assinado — computado lazy e cacheado por request
+	baseCookieName = "kyrux_csrf"
+	fieldName      = "kyrux_csrf_token"
+	headerName     = "X-CSRF-Token"
+	tokenLen       = 32
+	rawKey         = "csrf_raw"   // token bruto (cookie) — colocado pelo middleware
+	contextKey     = "csrf_token" // token assinado — computado lazy e cacheado por request
 )
+
+// cookieName usa o prefixo __Host- quando o cookie sempre viaja com Secure
+// (produção) — o prefixo exige Secure sempre ligado, Path=/ e nenhum
+// atributo Domain, e os dois últimos já são garantidos no SetCookie abaixo.
+// Em dev (secureCookie=false) o prefixo é omitido: navegadores recusam
+// silenciosamente um cookie __Host- sem Secure, o que derrubaria CSRF (e
+// todo POST/PUT/PATCH/DELETE) em HTTP puro local.
+func cookieName() string {
+	if secureCookie {
+		return "__Host-" + baseCookieName
+	}
+	return baseCookieName
+}
 
 var unsafeMethods = map[string]bool{
 	"POST": true, "PUT": true, "PATCH": true, "DELETE": true,
@@ -134,7 +147,7 @@ func Middleware(next router.HandlerFunc) router.HandlerFunc {
 
 // getOrCreate devolve o token bruto armazenado no cookie, criando-o se necessário.
 func getOrCreate(ctx *router.Context) (raw string, err error) {
-	if c, cerr := ctx.Request.Cookie(cookieName); cerr == nil && c.Value != "" {
+	if c, cerr := ctx.Request.Cookie(cookieName()); cerr == nil && c.Value != "" {
 		raw = c.Value
 	} else {
 		raw, err = generate()
@@ -142,12 +155,14 @@ func getOrCreate(ctx *router.Context) (raw string, err error) {
 			return
 		}
 		http.SetCookie(ctx.Writer, &http.Cookie{
-			Name:  cookieName,
+			Name:  cookieName(),
 			Value: raw,
-			// HttpOnly false é intencional (double-submit): o valor bruto pode
-			// ser lido por JS, mas o token submetido é o HMAC assinado com a
-			// SECRET_KEY — um XSS não consegue forjá-lo sem o segredo.
-			HttpOnly: false,
+			// HttpOnly true: nada no framework lê o cookie via JS — o token
+			// submetido em formulários/AJAX é sempre o HMAC assinado, lido do
+			// hidden input renderizado no servidor ({{ csrf_token }}), nunca
+			// do cookie bruto (ver apps/docs/.../08-csrf.md). O cookie só
+			// precisa viajar de volta ao servidor no header Cookie padrão.
+			HttpOnly: true,
 			Secure:   secureCookie,
 			SameSite: http.SameSiteStrictMode,
 			Path:     "/",
