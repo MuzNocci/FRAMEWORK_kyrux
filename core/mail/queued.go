@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 
 	"kyrux/core/queue"
 )
@@ -58,7 +60,13 @@ func (qd *Queued) handle(payload any) error {
 	if err != nil {
 		return err
 	}
-	return qd.sender.Send(context.Background(), msg)
+	err = qd.sender.Send(context.Background(), msg)
+	if err != nil {
+		log.Printf("mail: falha ao entregar para %s (assunto %q): %v", strings.Join(msg.To, ","), msg.Subject, err)
+		return err
+	}
+	log.Printf("mail: entregue para %s (assunto %q)", strings.Join(msg.To, ","), msg.Subject)
+	return nil
 }
 
 // decodeMessage normaliza payload pro tipo Message. Em fila de memória o
