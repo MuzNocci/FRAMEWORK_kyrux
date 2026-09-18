@@ -78,3 +78,50 @@ func TestPanicNoHandlerNaoDerrubaWorker(t *testing.T) {
 		t.Error("worker deveria sobreviver ao panic e processar a próxima tarefa")
 	}
 }
+
+func TestMaxAgeDescartaTarefaVelha(t *testing.T) {
+	q := New(1, 4)
+	defer q.Close()
+	q.SetMaxAge(time.Hour)
+
+	var chamado atomic.Bool
+	q.Register("tarefa", func(any) error { chamado.Store(true); return nil })
+
+	q.process(task{name: "tarefa", enqueuedAt: time.Now().Add(-2 * time.Hour)})
+
+	if chamado.Load() {
+		t.Error("handler não deveria rodar pra tarefa mais velha que maxAge")
+	}
+}
+
+func TestMaxAgeIgnoraTarefaDentroDoLimite(t *testing.T) {
+	q := New(1, 4)
+	defer q.Close()
+	q.SetMaxAge(time.Hour)
+
+	var chamado atomic.Bool
+	q.Register("tarefa", func(any) error { chamado.Store(true); return nil })
+
+	q.process(task{name: "tarefa", enqueuedAt: time.Now().Add(-time.Minute)})
+
+	if !chamado.Load() {
+		t.Error("handler deveria rodar pra tarefa dentro do maxAge")
+	}
+}
+
+func TestMaxAgeZeroEnqueuedAtNaoExpira(t *testing.T) {
+	q := New(1, 4)
+	defer q.Close()
+	q.SetMaxAge(time.Hour)
+
+	var chamado atomic.Bool
+	q.Register("tarefa", func(any) error { chamado.Store(true); return nil })
+
+	// enqueuedAt zerado simula item gravado no Redis antes desse campo
+	// existir — não pode ser tratado como "infinitamente velho".
+	q.process(task{name: "tarefa"})
+
+	if !chamado.Load() {
+		t.Error("tarefa com enqueuedAt zerado (formato antigo) não deveria ser tratada como expirada")
+	}
+}

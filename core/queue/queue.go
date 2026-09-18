@@ -44,6 +44,17 @@ const (
 	DefaultBufferSize = 1024
 	DefaultMaxRetries = 3
 
+	// DefaultMaxAge é quanto tempo, contado do primeiro Enqueue, uma tarefa
+	// pode esperar/tentar antes de ser descartada — independente de quantas
+	// tentativas já fez. Existe pra limitar o outro eixo além de maxRetries
+	// e maxLen: sem isso, um handler que só falha de vez em quando (retry
+	// automático) pode manter uma tarefa velha reaparecendo por dias, ou uma
+	// tarefa presa numa lista Redis grande pode esperar muito tempo até um
+	// worker livre chegar nela. E-mail/webhook atrasado por muito tempo já
+	// não faz sentido entregar (ver core/mail: notificação de contato de
+	// dias atrás chegando agora só confunde).
+	DefaultMaxAge = 24 * time.Hour
+
 	redisListKey = "kyrux:queue:tasks"
 
 	// redisBRPopTimeout é quanto cada worker fica bloqueado por ciclo
@@ -58,17 +69,19 @@ const (
 type Handler func(payload any) error
 
 type task struct {
-	name    string
-	payload any
-	attempt int
+	name       string
+	payload    any
+	attempt    int
+	enqueuedAt time.Time
 }
 
 // wireTask é a representação serializada de task no modo Redis — task tem
 // campos não-exportados (não dá pra marshalar direto).
 type wireTask struct {
-	Name    string `json:"name"`
-	Payload any    `json:"payload"`
-	Attempt int    `json:"attempt"`
+	Name       string    `json:"name"`
+	Payload    any       `json:"payload"`
+	Attempt    int       `json:"attempt"`
+	EnqueuedAt time.Time `json:"enqueued_at,omitempty"`
 }
 
 // Queue é uma fila de tarefas com workers em background.
@@ -81,6 +94,7 @@ type Queue struct {
 	wg         sync.WaitGroup
 	closed     bool
 	maxRetries int
+	maxAge     time.Duration // 0 desativa o limite de idade
 
 	// redis != nil ativa o modo Redis — todos os métodos abaixo checam esse
 	// campo primeiro e desviam para a lista Redis antes de tocar em tasks.
@@ -108,6 +122,7 @@ func New(workers, buffer int) *Queue {
 		handlers:   make(map[string]Handler),
 		tasks:      make(chan task, buffer),
 		maxRetries: DefaultMaxRetries,
+		maxAge:     DefaultMaxAge,
 	}
 	for i := 0; i < workers; i++ {
 		q.wg.Add(1)
@@ -159,6 +174,7 @@ func NewRedis(addr, password string, workers, maxLen int) (*Queue, error) {
 	q := &Queue{
 		handlers:     make(map[string]Handler),
 		maxRetries:   DefaultMaxRetries,
+		maxAge:       DefaultMaxAge,
 		redis:        rdb,
 		redisCtx:     context.Background(),
 		workerCtx:    workerCtx,
@@ -176,6 +192,16 @@ func NewRedis(addr, password string, workers, maxLen int) (*Queue, error) {
 func (q *Queue) SetMaxRetries(n int) {
 	q.mu.Lock()
 	q.maxRetries = n
+	q.mu.Unlock()
+}
+
+// SetMaxAge ajusta o tempo máximo (contado do primeiro Enqueue) que uma
+// tarefa pode esperar antes de ser descartada, independente de tentativas
+// restantes (padrão: 24h). d <= 0 desativa o limite — tarefas só são
+// descartadas por maxRetries ou ErrQueueFull.
+func (q *Queue) SetMaxAge(d time.Duration) {
+	q.mu.Lock()
+	q.maxAge = d
 	q.mu.Unlock()
 }
 
@@ -204,7 +230,7 @@ func (q *Queue) Enqueue(name string, payload any) error {
 	if !hasHandler {
 		return ErrNoHandler
 	}
-	return q.enqueueTask(task{name: name, payload: payload})
+	return q.enqueueTask(task{name: name, payload: payload, enqueuedAt: time.Now()})
 }
 
 func (q *Queue) enqueueTask(t task) error {
@@ -213,7 +239,7 @@ func (q *Queue) enqueueTask(t task) error {
 		if err == nil && n >= q.maxLen {
 			return ErrQueueFull
 		}
-		data, err := json.Marshal(wireTask{Name: t.name, Payload: t.payload, Attempt: t.attempt})
+		data, err := json.Marshal(wireTask{Name: t.name, Payload: t.payload, Attempt: t.attempt, EnqueuedAt: t.enqueuedAt})
 		if err != nil {
 			return fmt.Errorf("queue: payload de %q não é serializável em JSON (modo redis): %w", t.name, err)
 		}
@@ -300,7 +326,7 @@ func (q *Queue) redisWorker() {
 			log.Printf("queue: item inválido na lista do redis, descartado: %v\n", err)
 			continue
 		}
-		q.process(task{name: wt.Name, payload: wt.Payload, attempt: wt.Attempt})
+		q.process(task{name: wt.Name, payload: wt.Payload, attempt: wt.Attempt, enqueuedAt: wt.EnqueuedAt})
 	}
 }
 
@@ -315,7 +341,16 @@ func (q *Queue) process(t task) {
 	q.mu.RLock()
 	h := q.handlers[t.name]
 	maxRetries := q.maxRetries
+	maxAge := q.maxAge
 	q.mu.RUnlock()
+
+	// enqueuedAt zerado (item já estava no Redis antes desse campo existir)
+	// não conta como expirado — só tarefas com o carimbo de fato antigo.
+	if maxAge > 0 && !t.enqueuedAt.IsZero() && time.Since(t.enqueuedAt) > maxAge {
+		log.Printf("queue: tarefa %q descartada — na fila há %s (limite %s)",
+			t.name, time.Since(t.enqueuedAt).Round(time.Second), maxAge)
+		return
+	}
 	if h == nil {
 		log.Printf("queue: tarefa %q sem handler — descartada", t.name)
 		return
