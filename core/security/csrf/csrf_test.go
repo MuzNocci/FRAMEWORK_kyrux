@@ -23,7 +23,7 @@ func doRequest(t *testing.T, method, path, cookie, token string) *httptest.Respo
 		req = httptest.NewRequest(method, path, nil)
 	}
 	if cookie != "" {
-		req.Header.Set("Cookie", cookieName+"="+cookie)
+		req.Header.Set("Cookie", cookieName()+"="+cookie)
 	}
 	rec := httptest.NewRecorder()
 	Middleware(func(ctx *router.Context) {
@@ -44,7 +44,7 @@ func TestFluxoCompleto(t *testing.T) {
 	}
 	var raw string
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == cookieName {
+		if c.Name == cookieName() {
 			raw = c.Value
 		}
 	}
@@ -84,6 +84,24 @@ func TestTokenForLazy(t *testing.T) {
 	// Segunda chamada usa o cache do ctx (mesmo valor).
 	if TokenFor(ctx) != tok {
 		t.Error("TokenFor deveria ser estável na mesma request")
+	}
+}
+
+// TestCookieNamePrefix garante que o nome do cookie leva __Host- só quando
+// Secure está ligado (produção) — sem isso o navegador rejeitaria o cookie
+// inteiro em HTTP puro (dev), derrubando CSRF em todo POST/PUT/PATCH/DELETE.
+func TestCookieNamePrefix(t *testing.T) {
+	t.Cleanup(func() { SetSecure(false) })
+
+	SetSecure(false)
+	if got := cookieName(); got != baseCookieName {
+		t.Errorf("dev (Secure=false): esperava %q, recebeu %q", baseCookieName, got)
+	}
+
+	SetSecure(true)
+	want := "__Host-" + baseCookieName
+	if got := cookieName(); got != want {
+		t.Errorf("produção (Secure=true): esperava %q, recebeu %q", want, got)
 	}
 }
 

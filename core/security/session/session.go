@@ -194,7 +194,21 @@ func (s *Store) gc() {
 	}
 }
 
-func CookieName() string { return "kyrux_session" }
+// CookieName usa o prefixo __Host- quando o cookie sempre viaja com Secure
+// (produção) — o prefixo exige Secure sempre ligado, Path=/ e nenhum
+// atributo Domain, e os dois últimos já são garantidos em SetCookie/Logout
+// abaixo. Trava o navegador contra um cookie kyrux_session de mesmo nome
+// injetado por um subdomínio ou por HTTP puro — mesma hardening já aplicada
+// ao cookie CSRF (ver core/security/csrf), e mais crítica aqui: este é o
+// próprio token de autenticação. Em dev (secureDefault=false) o prefixo é
+// omitido pelo mesmo motivo do CSRF: __Host- sem Secure é recusado
+// silenciosamente pelo navegador, o que derrubaria login local em HTTP puro.
+func CookieName() string {
+	if secureDefault.Load() {
+		return "__Host-kyrux_session"
+	}
+	return "kyrux_session"
+}
 
 // secureDefault força a flag Secure nos cookies de sessão. Definido pelo
 // bootstrap com !debug — não dependa de r.TLS: atrás de proxy reverso
