@@ -23,6 +23,17 @@ const (
 	tokenLen       = 32
 	rawKey         = "csrf_raw"   // token bruto (cookie) — colocado pelo middleware
 	contextKey     = "csrf_token" // token assinado — computado lazy e cacheado por request
+
+	// maxRequestBody limita o corpo de qualquer POST/PUT/PATCH/DELETE lido
+	// por este middleware (inclui uploads multipart, ex: anexos do
+	// formulário de briefing). Sem isso, request.FormValue no multipart
+	// chama ParseMultipartForm por baixo dos panos, que lê o corpo inteiro
+	// — e um corpo grande/malformado demais faz ParseMultipartForm falhar
+	// e descartar TODO o form já lido, inclusive o campo do token CSRF que
+	// chegou certinho antes do anexo. O sintoma vira "CSRF inválido ou
+	// ausente" (403), escondendo que o problema real era o corpo da
+	// requisição — ver formValue abaixo, que agora distingue os dois casos.
+	maxRequestBody = 20 << 20 // 20MB
 )
 
 // cookieName usa o prefixo __Host- quando o cookie sempre viaja com Secure
@@ -131,7 +142,13 @@ func Middleware(next router.HandlerFunc) router.HandlerFunc {
 		ctx.Set(rawKey, raw)
 
 		if unsafeMethods[ctx.Request.Method] && !isExempt(ctx.Request.URL.Path) {
-			submitted := ctx.Request.FormValue(fieldName)
+			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, maxRequestBody)
+
+			submitted, parseErr := formValue(ctx.Request, fieldName)
+			if parseErr != nil {
+				http.Error(ctx.Writer, "400 Bad Request — não foi possível processar o corpo da requisição (arquivo grande demais ou formulário incompleto)", http.StatusBadRequest)
+				return
+			}
 			if submitted == "" {
 				submitted = ctx.Request.Header.Get(headerName)
 			}
@@ -143,6 +160,27 @@ func Middleware(next router.HandlerFunc) router.HandlerFunc {
 
 		next(ctx)
 	}
+}
+
+// formValue lê o valor de key no corpo da requisição (form comum ou
+// multipart), devolvendo o erro de parse separado de "campo ausente" — ao
+// contrário de (*http.Request).FormValue, que engole qualquer erro e
+// devolve "" tanto pra "não veio" quanto pra "corpo grande/malformado
+// demais pra ler" (ver o comentário de maxRequestBody acima).
+func formValue(r *http.Request, key string) (string, error) {
+	if r.Form == nil {
+		if ct := r.Header.Get("Content-Type"); strings.HasPrefix(ct, "multipart/form-data") {
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				return "", err
+			}
+		} else if err := r.ParseForm(); err != nil {
+			return "", err
+		}
+	}
+	if vs := r.Form[key]; len(vs) > 0 {
+		return vs[0], nil
+	}
+	return "", nil
 }
 
 // getOrCreate devolve o token bruto armazenado no cookie, criando-o se necessário.

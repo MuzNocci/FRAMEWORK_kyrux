@@ -1,6 +1,8 @@
 package csrf
 
 import (
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -116,5 +118,74 @@ func TestExempt(t *testing.T) {
 	}
 	if rec := doRequest(t, "POST", "/nao-isento/", raw, ""); rec.Code != http.StatusForbidden {
 		t.Errorf("POST fora da isenção: esperava 403, recebeu %d", rec.Code)
+	}
+}
+
+// multipartRequest monta um POST multipart/form-data com o token CSRF e um
+// anexo de attachmentSize bytes — simula o formulário de briefing.
+func multipartRequest(t *testing.T, cookie, token string, attachmentSize int) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	if token != "" {
+		if err := w.WriteField(fieldName, token); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if attachmentSize > 0 {
+		fw, err := w.CreateFormFile("attachments", "anexo.bin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fw.Write(make([]byte, attachmentSize)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/start-project/", &body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if cookie != "" {
+		req.Header.Set("Cookie", cookieName()+"="+cookie)
+	}
+	return req
+}
+
+// TestMultipartComAnexoValido garante que um POST multipart com anexo
+// dentro do limite e token correto continua sendo aceito normalmente —
+// era esse o caminho do formulário de "Iniciar Projeto" (com upload de
+// arquivo), diferente do form simples de /contact/.
+func TestMultipartComAnexoValido(t *testing.T) {
+	SetSecret(testSecret)
+	raw, _ := generate()
+	req := multipartRequest(t, raw, sign(raw), 1024)
+	rec := httptest.NewRecorder()
+	Middleware(func(ctx *router.Context) {
+		ctx.Writer.WriteHeader(http.StatusOK)
+	})(&router.Context{Writer: rec, Request: req})
+	if rec.Code != http.StatusOK {
+		t.Errorf("multipart com anexo e token válido: esperava 200, recebeu %d — corpo: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMultipartCorpoGrandeDemaisNaoViraCSRFInvalido é a regressão do bug
+// real: antes, um corpo maior que o limite fazia ParseMultipartForm falhar
+// e descartar o form inteiro (inclusive o token CSRF já lido corretamente),
+// e o middleware reportava "403 CSRF inválido" — escondendo que o problema
+// era o tamanho do corpo. Agora deve ser um 400 claro, não um 403.
+func TestMultipartCorpoGrandeDemaisNaoViraCSRFInvalido(t *testing.T) {
+	SetSecret(testSecret)
+	raw, _ := generate()
+	req := multipartRequest(t, raw, sign(raw), maxRequestBody+1024)
+	rec := httptest.NewRecorder()
+	Middleware(func(ctx *router.Context) {
+		ctx.Writer.WriteHeader(http.StatusOK)
+	})(&router.Context{Writer: rec, Request: req})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("multipart acima do limite: esperava 400, recebeu %d — corpo: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "CSRF") {
+		t.Errorf("erro de corpo grande demais não deveria mencionar CSRF (mensagem enganosa): %s", rec.Body.String())
 	}
 }
