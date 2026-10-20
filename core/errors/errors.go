@@ -7,6 +7,7 @@ import (
 	"html"
 	"html/template"
 	"kyrux/core/environment"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -159,6 +160,10 @@ func RenderPanic(w http.ResponseWriter, r *http.Request, recovered any, stack []
 		renderDebugPanic(w, r, recovered, stack)
 		return
 	}
+	// Produção: o visitante vê só a página 500, mas o erro fica no log (sem
+	// corpo nem query da requisição, que podem conter dados pessoais) para
+	// investigação e detecção de abuso.
+	log.Printf("kyrux: panic em %s %s: %v\n%s", r.Method, r.URL.Path, recovered, stack)
 	renderDefault(w, http.StatusInternalServerError)
 }
 

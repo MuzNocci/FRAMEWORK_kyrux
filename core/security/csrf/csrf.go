@@ -79,14 +79,20 @@ func SetSecure(v bool) { secureCookie = v }
 // Deve ser chamado no bootstrap antes de servir requisições.
 func SetSecret(key string) { atomicSecret.Store(key) }
 
+// secretKey devolve a chave HMAC do CSRF DERIVADA do SECRET_KEY (separação de
+// chaves): o mesmo SECRET_KEY também assina tokens de autenticação; com uma
+// chave por finalidade, um valor assinado num contexto nunca vale no outro.
 func secretKey() []byte {
-	if v, _ := atomicSecret.Load().(string); v != "" {
-		return []byte(v)
+	base, _ := atomicSecret.Load().(string)
+	if base == "" {
+		base = environment.GetOr("SECRET_KEY", "")
 	}
-	if k := environment.GetOr("SECRET_KEY", ""); k != "" {
-		return []byte(k)
+	if base == "" {
+		panic("csrf: SECRET_KEY não configurado — defina no .env ou chame csrf.SetSecret() no bootstrap")
 	}
-	panic("csrf: SECRET_KEY não configurado — defina no .env ou chame csrf.SetSecret() no bootstrap")
+	mac := hmac.New(sha256.New, []byte(base))
+	mac.Write([]byte("kyrux/csrf/v1"))
+	return mac.Sum(nil)
 }
 
 // FieldName devolve o nome do campo hidden usado para submeter o token CSRF

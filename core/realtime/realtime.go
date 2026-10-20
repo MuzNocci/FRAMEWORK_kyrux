@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"kyrux/core/events"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -114,21 +115,32 @@ func (h *Hub) SetAllowedOrigins(hosts []string) {
 	h.allowedOrigins = hosts
 }
 
+// MaxClients é o teto de conexões websocket simultâneas por processo.
+var MaxClients = 10_000
+
 func (h *Hub) originAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		return true // cliente não-browser (curl, testes)
-	}
-	if len(h.allowedOrigins) == 0 {
-		return true // sem lista configurada, permite tudo
+		return true // cliente não-browser (curl, testes): sem cookies de outro site
 	}
 	u, err := url.Parse(origin)
 	if err != nil {
 		return false
 	}
 	host := u.Hostname()
+	// Mesma origem é sempre aceita. Sem lista configurada (ou com "*", que no
+	// ALLOWED_HOSTS libera hosts, não origens), SÓ a mesma origem: aceitar
+	// qualquer Origin permitiria a outro site abrir o websocket com os cookies
+	// do usuário (Cross-Site WebSocket Hijacking).
+	reqHost := r.Host
+	if hh, _, err := net.SplitHostPort(reqHost); err == nil {
+		reqHost = hh
+	}
+	if strings.EqualFold(host, reqHost) {
+		return true
+	}
 	for _, allowed := range h.allowedOrigins {
-		if strings.EqualFold(host, allowed) {
+		if allowed != "*" && strings.EqualFold(host, allowed) {
 			return true
 		}
 	}
@@ -157,6 +169,15 @@ func (h *Hub) Broadcast(event string, payload any) {
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.originAllowed(r) {
 		http.Error(w, "websocket: origin não permitido", http.StatusForbidden)
+		return
+	}
+	// Teto de conexões simultâneas: cada websocket ocupa duas goroutines e um
+	// buffer; sem limite, abrir conexões em massa esgota memória (DoS).
+	h.mu.RLock()
+	full := len(h.clients) >= MaxClients
+	h.mu.RUnlock()
+	if full {
+		http.Error(w, "websocket: limite de conexões atingido", http.StatusServiceUnavailable)
 		return
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{

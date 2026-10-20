@@ -37,6 +37,11 @@ const (
 	argonParallelism = 4
 	argonSaltLen     = 16
 	argonKeyLen      = 32
+
+	// Tetos aceitos ao VERIFICAR um hash (os parâmetros vêm do próprio hash).
+	maxArgonMemory      = 512 * 1024 // 512 MB
+	maxArgonIterations  = 10
+	maxArgonParallelism = 16
 )
 
 // argonSem limita derivações Argon2id concorrentes. Cada derivação aloca
@@ -84,6 +89,12 @@ func CheckPassword(password, encoded string) bool {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &mem, &iter, &par); err != nil {
 		return false
 	}
+	// Os parâmetros vêm do próprio hash: sem teto, um hash adulterado no banco
+	// (m=4GB, t=1000) travaria o servidor na verificação. Limites bem acima
+	// de qualquer configuração legítima.
+	if mem == 0 || mem > maxArgonMemory || iter == 0 || iter > maxArgonIterations || par == 0 || par > maxArgonParallelism {
+		return false
+	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
@@ -94,6 +105,9 @@ func CheckPassword(password, encoded string) bool {
 		return false
 	}
 
+	if len(storedHash) < 16 || len(storedHash) > 64 || len(salt) < 8 || len(salt) > 64 {
+		return false
+	}
 	candidate := argonKey(password, salt, iter, mem, par, uint32(len(storedHash)))
 	return subtle.ConstantTimeCompare(candidate, storedHash) == 1
 }

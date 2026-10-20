@@ -112,14 +112,23 @@ var staticSecureHeaders = [...][2]string{
 	{"X-Content-Type-Options", "nosniff"},
 	{"X-Frame-Options", "DENY"},
 	{"Referrer-Policy", "strict-origin-when-cross-origin"},
-	{"Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()"},
+	{"Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), hid=(), midi=(), display-capture=(), browsing-topics=(), interest-cohort=()"},
 	{"X-Permitted-Cross-Domain-Policies", "none"},
+	// Isola a janela de popups/abas de outra origem (window.opener) — barra
+	// ataques do tipo tabnabbing e vazamentos entre origens (Spectre/XS-Leaks).
+	{"Cross-Origin-Opener-Policy", "same-origin"},
+	{"Origin-Agent-Cluster", "?1"},
+	{"X-DNS-Prefetch-Control", "off"},
 }
 
 // DefaultCSP é a Content-Security-Policy usada por SecureHeaders enquanto
 // SetCSP não for chamado — estrita o suficiente pra a maioria dos sites
-// sem terceiro nenhum (sem scripts/estilos/fontes externas).
-const DefaultCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+// sem terceiro nenhum (sem scripts/estilos/fontes externas). Além das
+// origens de conteúdo, trava os vetores que default-src NÃO cobre:
+// object-src (plugins), base-uri (<base> injetado redireciona URLs
+// relativas), form-action (formulário injetado enviando dados para fora) e
+// frame-ancestors (clickjacking — equivalente moderno do X-Frame-Options).
+const DefaultCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 var cspPolicy atomic.Value // string — sempre lido via CSP(), nunca direto
 
@@ -263,21 +272,25 @@ func RateLimit(max int, window time.Duration) router.MiddlewareFunc {
 
 // trustedProxyHeader, quando definido, é o header do qual o IP real do cliente
 // é lido (ex: "X-Forwarded-For"). Só ative se o Kyrux estiver atrás de um proxy
-// reverso que SOBRESCREVE esse header — caso contrário o cliente pode forjá-lo
-// e escapar do RateLimit. Configurado no bootstrap via TRUSTED_PROXY_HEADER.
+// reverso confiável. Configurado no bootstrap via TRUSTED_PROXY_HEADER.
 var trustedProxyHeader string
 
 // SetTrustedProxyHeader define o header de IP real do cliente (proxy confiável).
 // String vazia (padrão) usa apenas RemoteAddr — seguro em qualquer topologia.
 func SetTrustedProxyHeader(h string) { trustedProxyHeader = h }
 
-// realIP resolve o IP do cliente. Atrás de proxy confiável, lê o primeiro IP
-// do header configurado (o cliente original numa cadeia "cliente, proxy1, ...").
+// realIP resolve o IP do cliente. Atrás de proxy confiável, lê o ÚLTIMO IP do
+// header configurado: é o que o proxy confiável acrescentou (o endereço de quem
+// se conectou a ele). Os anteriores vêm do próprio cliente e podem ser forjados
+// — usar o primeiro deixaria um atacante escapar do RateLimit mandando
+// "X-Forwarded-For: <ip qualquer>" (nginx com $proxy_add_x_forwarded_for, por
+// exemplo, preserva o valor recebido e só acrescenta no fim). Com um proxy que
+// SOBRESCREVE o header (Caddy com header_up), há um único IP e o resultado é igual.
 func realIP(r *http.Request) string {
 	if trustedProxyHeader != "" {
 		if v := r.Header.Get(trustedProxyHeader); v != "" {
-			if i := strings.IndexByte(v, ','); i != -1 {
-				v = v[:i]
+			if i := strings.LastIndexByte(v, ','); i != -1 {
+				v = v[i+1:]
 			}
 			if ip := strings.TrimSpace(v); ip != "" {
 				return ip
@@ -286,6 +299,10 @@ func realIP(r *http.Request) string {
 	}
 	return clientIP(r.RemoteAddr)
 }
+
+// RealIP expõe a mesma resolução de IP usada pelo RateLimit, para apps que
+// registram o IP do cliente (auditoria, alertas de login) com a mesma regra.
+func RealIP(r *http.Request) string { return realIP(r) }
 
 // clientIP extrai o IP (sem porta) de um RemoteAddr, com suporte a IPv6.
 func clientIP(remoteAddr string) string {

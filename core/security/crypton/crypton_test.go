@@ -54,3 +54,11 @@ func TestEncryptIdempotente(t *testing.T) {
 		t.Errorf("Encrypt deveria ser idempotente sobre valor já cifrado")
 	}
 }
+
+func TestCheckPasswordRecusaParametrosAbusivos(t *testing.T) {
+	// Hash adulterado pedindo 4 GB de memória: deve ser recusado sem derivar.
+	h := "$argon2id$v=19$m=4194304,t=1000,p=4$c2FsdHNhbHRzYWx0c2FsdA$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g"
+	if CheckPassword("x", h) {
+		t.Fatal("hash com parâmetros fora do teto não pode ser aceito")
+	}
+}
