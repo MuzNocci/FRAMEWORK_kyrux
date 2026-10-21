@@ -83,13 +83,20 @@ func MediaHandler(dir string) http.Handler {
 	})
 }
 
+// Cache longo ("immutable") só para endereços com versão (?v=<hash>, quando o
+// projeto versiona os estáticos): o conteúdo daquele endereço nunca muda.
+// Sem versão (ex: ícones citados por manifesto antigo ou service worker), o
+// arquivo pode ser trocado no próximo deploy; cache de 1 hora, para o
+// navegador e a CDN não guardarem a versão velha por um ano.
 func MultiStaticHandler(appsDir string) http.Handler {
 	fs := http.FileServer(&multiStatic{appsDir: appsDir})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isDebug() {
+		if isDebug() {
+			w.Header().Set("Cache-Control", "no-store")
+		} else if r.URL.Query().Get("v") != "" {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
-			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
 		}
 		fs.ServeHTTP(w, r)
 	})
