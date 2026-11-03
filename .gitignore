@@ -1,5 +1,7 @@
 # Environment
 .env
+.env.bak
+.env.prod
 .env copy
 
 # Development
@@ -58,7 +60,10 @@ Thumbs.db
 # (database/kyrux.sqlite3, criado automaticamente só em development quando
 # ADMIN_ENABLED=true e nenhum banco está configurado)
 /database/*
-/database/
+# a pasta de migrations vem vazia no repositório (o makemigrations não a cria)
+!/database/migrations/
+/database/migrations/*
+!/database/migrations/.gitkeep
 
 # Notas internas de benchmark — comparativo pontual, não é documentação
 # oficial do sistema (essa fica em README.md/USE.md)
