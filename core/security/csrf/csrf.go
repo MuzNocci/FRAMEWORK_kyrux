@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html/template"
 	"kyrux/core/environment"
+	kyerrors "kyrux/core/errors"
 	"kyrux/core/render"
 	"kyrux/core/router"
 	"net/http"
@@ -152,20 +153,31 @@ func Middleware(next router.HandlerFunc) router.HandlerFunc {
 
 			submitted, parseErr := formValue(ctx.Request, fieldName)
 			if parseErr != nil {
-				http.Error(ctx.Writer, "400 Bad Request — não foi possível processar o corpo da requisição (arquivo grande demais ou formulário incompleto)", http.StatusBadRequest)
+				falha(ctx, http.StatusBadRequest, "400 Bad Request — não foi possível processar o corpo da requisição (arquivo grande demais ou formulário incompleto)")
 				return
 			}
 			if submitted == "" {
 				submitted = ctx.Request.Header.Get(headerName)
 			}
 			if !valid(raw, submitted) {
-				http.Error(ctx.Writer, "403 Forbidden — CSRF token inválido ou ausente", http.StatusForbidden)
+				falha(ctx, http.StatusForbidden, "403 Forbidden — CSRF token inválido ou ausente")
 				return
 			}
 		}
 
 		next(ctx)
 	}
+}
+
+// falha responde a recusa do CSRF. Se o projeto registrou uma página para o
+// código (kyerrors.Set), ela é usada — o visitante vê a página do site, não
+// texto puro; senão, mantém a mensagem em texto, que diz o motivo exato.
+func falha(ctx *router.Context, code int, msg string) {
+	if h, ok := kyerrors.Handler(code); ok {
+		h(ctx.Writer, ctx.Request)
+		return
+	}
+	http.Error(ctx.Writer, msg, code)
 }
 
 // formValue lê o valor de key no corpo da requisição (form comum ou

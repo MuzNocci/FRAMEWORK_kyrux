@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	kyerrors "kyrux/core/errors"
 	"kyrux/core/router"
 )
 
@@ -187,5 +188,26 @@ func TestMultipartCorpoGrandeDemaisNaoViraCSRFInvalido(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "CSRF") {
 		t.Errorf("erro de corpo grande demais não deveria mencionar CSRF (mensagem enganosa): %s", rec.Body.String())
+	}
+}
+
+// TestFalhaUsaPaginaDoProjeto: sem página registrada, a recusa continua em
+// texto com o motivo; com kyerrors.Set(403, …), o visitante vê a página do site.
+func TestFalhaUsaPaginaDoProjeto(t *testing.T) {
+	SetSecret(testSecret)
+	t.Cleanup(func() { kyerrors.Set(http.StatusForbidden, nil) })
+
+	rec := doRequest(t, "POST", "/", "", "")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "CSRF token inválido") {
+		t.Fatalf("sem página: status %d, corpo %q", rec.Code, rec.Body.String())
+	}
+
+	kyerrors.Set(http.StatusForbidden, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("página do site"))
+	})
+	rec = doRequest(t, "POST", "/", "", "")
+	if rec.Code != http.StatusForbidden || rec.Body.String() != "página do site" {
+		t.Fatalf("com página: status %d, corpo %q", rec.Code, rec.Body.String())
 	}
 }

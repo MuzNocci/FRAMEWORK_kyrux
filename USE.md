@@ -2040,12 +2040,26 @@ errors.Set(404, func(w http.ResponseWriter, r *http.Request) {
     json.NewEncoder(w).Encode(map[string]string{"error": "não encontrado"})
 })
 
+// O handler recebe (w, r), sem *router.Context: para usar um template do
+// app, renderize com render.Partial e escreva a resposta.
 errors.Set(500, func(w http.ResponseWriter, r *http.Request) {
-    render.For("meuapp").Render(/* ... */)
+    html, err := render.Partial("meuapp", "erro500.html", map[string]any{})
+    if err != nil {
+        http.Error(w, "erro interno", 500)
+        return
+    }
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    w.WriteHeader(500)
+    w.Write([]byte(html))
 })
+
+errors.Set(404, nil) // remove o handler e volta à página padrão
 ```
 
-> Handlers registrados via `errors.Set()` sempre têm prioridade, em qualquer ambiente.
+> Handlers registrados via `errors.Set()` têm prioridade sobre a página padrão:
+> - em qualquer erro que passe por `errors.Render` — 404/405 automáticos do router, `ctx.Error(code)`, `RateLimit` (429), `AllowedHosts` (400);
+> - no **panic em `production`**: o erro vai para o log e o visitante vê a página do `Set(500, …)`. Se essa página também falhar, cai na página padrão. Em `development` o panic continua mostrando a página de debug com o stack trace;
+> - nas recusas do **CSRF**: `Set(403, …)` para token inválido ou ausente, `Set(400, …)` para corpo ilegível. Sem handler registrado, a resposta continua em texto com o motivo.
 
 ---
 
@@ -3613,11 +3627,14 @@ kyerrors.Set(404, func(w http.ResponseWriter, r *http.Request) {
 })
 
 kyerrors.Set(500, func(w http.ResponseWriter, r *http.Request) {
-    // renderizar template personalizado de erro 500
+    // renderizar template personalizado de erro 500 (render.Partial)
 })
+
+kyerrors.Set(404, nil)                    // remove o handler
+h, ok := kyerrors.Handler(403)            // consulta o handler registrado
 ```
 
-Handlers registrados têm prioridade sobre o comportamento padrão em qualquer ambiente.
+Handlers registrados têm prioridade sobre o comportamento padrão — inclusive no panic em `production` (`Set(500, …)`) e nas recusas do CSRF (`Set(403, …)` / `Set(400, …)`); em `development` o panic mostra a página de debug. Detalhes na seção 18.
 
 ### Session — API de baixo nível
 

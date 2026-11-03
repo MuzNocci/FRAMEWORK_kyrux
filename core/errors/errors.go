@@ -132,18 +132,30 @@ var (
 )
 
 // Set registra um handler personalizado para o código HTTP informado.
+// Set(code, nil) remove o registro e volta à página padrão.
 func Set(code int, h http.HandlerFunc) {
 	mu.Lock()
-	handlers[code] = h
+	if h == nil {
+		delete(handlers, code)
+	} else {
+		handlers[code] = h
+	}
 	mu.Unlock()
+}
+
+// Handler devolve o handler personalizado registrado com Set para o código.
+// Usado por quem gera erros fora de Render (ex.: o middleware de CSRF) para
+// respeitar a página do projeto quando ela existir.
+func Handler(code int) (http.HandlerFunc, bool) {
+	mu.RLock()
+	h, ok := handlers[code]
+	mu.RUnlock()
+	return h, ok
 }
 
 // Render serve a página de erro. Em development mostra a debug page; em production a página estilizada.
 func Render(w http.ResponseWriter, r *http.Request, code int) {
-	mu.RLock()
-	h, ok := handlers[code]
-	mu.RUnlock()
-	if ok {
+	if h, ok := Handler(code); ok {
 		h(w, r)
 		return
 	}
@@ -164,6 +176,18 @@ func RenderPanic(w http.ResponseWriter, r *http.Request, recovered any, stack []
 	// corpo nem query da requisição, que podem conter dados pessoais) para
 	// investigação e detecção de abuso.
 	log.Printf("kyrux: panic em %s %s: %v\n%s", r.Method, r.URL.Path, recovered, stack)
+	if h, ok := Handler(http.StatusInternalServerError); ok {
+		// A página personalizada (Set(500, …)) não pode derrubar o tratamento
+		// do erro: se ela mesma falhar, cai na página padrão.
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("kyrux: página 500 personalizada falhou: %v", rec)
+				renderDefault(w, http.StatusInternalServerError)
+			}
+		}()
+		h(w, r)
+		return
+	}
 	renderDefault(w, http.StatusInternalServerError)
 }
 
