@@ -17,9 +17,9 @@ var (
 //
 // O campo Group usa column:user_group para evitar conflito com a palavra reservada SQL GROUP.
 //
-// A tag "login" marca qual campo é usado para autenticação (Login/GetUser).
-// Só um campo pode ter "login". Não altere após o primeiro migrate — equivale a uma
-// mudança de schema que exige nova migration.
+// A tag "login" marca o campo padrão de autenticação (só um campo pode tê-la).
+// Para escolher por projeto, use AUTH_LOGIN_FIELD=username|email no .env, que tem
+// prioridade sobre a tag (ver SetLoginField).
 type User struct {
 	ID        int64   `kyrux:"column:id,pk"`
 	UUID      string  `kyrux:"column:uuid,size:36"`

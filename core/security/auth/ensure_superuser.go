@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"kyrux/core/database"
 	"kyrux/core/orm"
+	"strings"
 	"time"
 )
 
@@ -12,8 +13,9 @@ import (
 // ADMIN_SUPERUSER_PASSWORD (ver bootstrap) se ainda não existir ninguém com esse
 // login — nunca atualiza a senha de uma conta já existente, mesmo que o valor no
 // .env mude entre reinícios (evita reset silencioso de senha a cada boot em dev
-// com hot reload). loginValue é aplicado ao campo marcado com kyrux:"login"
-// (Username ou Email, conforme o model User).
+// com hot reload). loginValue é aplicado ao campo de login em uso (AUTH_LOGIN_FIELD
+// ou a tag kyrux:"login"). No login por e-mail, o e-mail também vai para Username,
+// que é único e obrigatório na tabela.
 //
 // Retorna (true, nil) quando cria a conta, (false, nil) quando já existia.
 func EnsureSuperuser(db *database.DB, loginValue, password string) (bool, error) {
@@ -24,7 +26,12 @@ func EnsureSuperuser(db *database.DB, loginValue, password string) (bool, error)
 		return false, fmt.Errorf("senha deve ter ao menos 8 caracteres")
 	}
 
-	n, err := orm.FromDB[User](db).Where(loginColumn+" = ?", loginValue).Count()
+	loginValue = normalizeLogin(loginValue)
+	if loginByEmail() && !strings.Contains(loginValue, "@") {
+		return false, fmt.Errorf("com login por e-mail, %q precisa ser um e-mail", loginValue)
+	}
+
+	n, err := orm.FromDB[User](db).Where(loginWhere(), loginValue).Count()
 	if err != nil {
 		return false, fmt.Errorf("verificar superusuário existente: %w", err)
 	}
@@ -40,10 +47,9 @@ func EnsureSuperuser(db *database.DB, loginValue, password string) (bool, error)
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	if loginFieldName == "Email" {
+	user.Username = loginValue
+	if loginByEmail() {
 		user.Email = &loginValue
-	} else {
-		user.Username = loginValue
 	}
 	if err := user.SetPassword(password); err != nil {
 		return false, fmt.Errorf("hash da senha: %w", err)

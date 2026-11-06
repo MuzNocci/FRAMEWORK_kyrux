@@ -106,6 +106,17 @@ type formField struct {
 type loginPageData struct {
 	baseData
 	LoginValue string
+	LoginLabel string // "Usuário" ou "E-mail", conforme AUTH_LOGIN_FIELD
+	LoginType  string // type do campo: "text" ou "email"
+}
+
+// newLoginPage monta os dados da tela de login conforme o campo de login em uso.
+func newLoginPage(b baseData, loginValue string) loginPageData {
+	d := loginPageData{baseData: b, LoginValue: loginValue, LoginLabel: "Usuário", LoginType: "text"}
+	if auth.LoginFieldName() == "Email" {
+		d.LoginLabel, d.LoginType = "E-mail", "email"
+	}
+	return d
 }
 
 type dashboardPageData struct {
@@ -394,13 +405,16 @@ func (s *site) handleLoginForm(ctx *router.Context) {
 			return
 		}
 	}
-	data := loginPageData{baseData: s.base(ctx, "", "Login")}
+	data := newLoginPage(s.base(ctx, "", "Login"), "")
 	renderPage(ctx.Writer, loginTpl, data)
 }
 
 func loginErrorMessage(err error) string {
 	if errors.Is(err, auth.ErrTooManyAttempts) {
 		return "Muitas tentativas. Aguarde um pouco antes de tentar novamente."
+	}
+	if auth.LoginFieldName() == "Email" {
+		return "E-mail ou senha inválidos."
 	}
 	return "Usuário ou senha inválidos."
 }
@@ -447,7 +461,7 @@ func (s *site) handleLoginSubmit(ctx *router.Context) {
 func (s *site) renderLoginError(ctx *router.Context, loginValue, msg string) {
 	b := s.base(ctx, "", "Login")
 	b.FlashError = msg
-	renderPage(ctx.Writer, loginTpl, loginPageData{baseData: b, LoginValue: loginValue})
+	renderPage(ctx.Writer, loginTpl, newLoginPage(b, loginValue))
 }
 
 func (s *site) handleLogout(ctx *router.Context) {

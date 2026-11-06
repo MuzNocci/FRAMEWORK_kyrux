@@ -48,6 +48,10 @@ func createUserCLI(isAdmin, isStaff bool) error {
 
 	crypton.SetPepper(environment.Get("PASSWORD_PEPPER"))
 
+	if err := auth.SetLoginField(environment.Get("AUTH_LOGIN_FIELD")); err != nil {
+		return err
+	}
+
 	label := "Usuário"
 	if isAdmin {
 		label = "Superusuário"
@@ -65,6 +69,10 @@ func createUserCLI(isAdmin, isStaff bool) error {
 		if err != nil {
 			return err
 		}
+		email = strings.ToLower(email)
+		if !strings.Contains(email, "@") {
+			return fmt.Errorf("e-mail inválido: %q", email)
+		}
 		if err := cuCheckUnique(db, "email", email); err != nil {
 			return err
 		}
@@ -73,10 +81,12 @@ func createUserCLI(isAdmin, isStaff bool) error {
 		if err != nil {
 			return err
 		}
-		if username != "" {
-			if err := cuCheckUnique(db, "username", username); err != nil {
-				return err
-			}
+		if username == "" {
+			// A coluna é única e obrigatória: sem isto a segunda conta colidiria.
+			username = email
+		}
+		if err := cuCheckUnique(db, "username", username); err != nil {
+			return err
 		}
 	} else {
 		// Username é o campo de login — obrigatório (padrão)

@@ -155,6 +155,10 @@ QUEUE_WORKERS=4
 ADMIN_ENABLED=false
 ADMIN_PATH=/admin/
 
+# Campo usado para entrar: username (padrão) ou email. Vale para auth.Login,
+# admin, createsuperuser e ADMIN_SUPERUSER_USERNAME.
+AUTH_LOGIN_FIELD=username
+
 # Opcional — cria o superusuário inicial no boot, se ainda não existir
 # ninguém com esse login (não redefine senha de conta já existente)
 # ADMIN_SUPERUSER_USERNAME=admin
@@ -263,7 +267,7 @@ go run main.go createsuperuser
 
 Cria interativamente um usuário com `is_admin=true` e `is_staff=true`. Requer `DB_ENABLED=true`.
 
-O campo marcado com `kyrux:"login"` no model `auth.User` é sempre obrigatório. O outro identificador (username ou e-mail) é solicitado como opcional — se informado, também é verificado quanto à unicidade.
+O campo de login em uso (`AUTH_LOGIN_FIELD` no `.env`; sem ele, a tag `kyrux:"login"` do model `auth.User`) é sempre obrigatório. O outro identificador (username ou e-mail) é solicitado como opcional — se informado, também é verificado quanto à unicidade. No login por e-mail, deixar o username em branco grava o e-mail também no username.
 
 ### Criar usuário comum
 
@@ -1125,7 +1129,7 @@ type Cliente struct {
 | `kyrux:"default:valor"` | Valor SQL usado no INSERT quando o campo for zero Go. Ex: `default:NOW()`, `default:true`, `default:0`. Literal SQL — sem placeholder `?`. |
 | `kyrux:"hash"` | Hash automático **Argon2id+pepper** na escrita (Create/Update). Nunca revertido. |
 | `kyrux:"encrypt"` | **AES-256-GCM** — cifra na escrita, decifra automaticamente na leitura. Requer `FIELD_ENCRYPTION_KEY`. |
-| `kyrux:"login"` | Exclusivo do `auth.User`. Marca o campo de login (username ou email). Apenas um campo por struct. Imutável após o primeiro migrate. |
+| `kyrux:"login"` | Exclusivo do `auth.User`. Marca o campo de login padrão (username ou email). Apenas um campo por struct. `AUTH_LOGIN_FIELD` no `.env` tem prioridade sobre a tag. |
 | `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo `Update` (ex: `updated_at`). Também preenche no `Create` se o campo estiver zerado. |
 | `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration. A tabela referenciada precisa existir antes (declare-a primeiro ou em migration anterior). No admin, vira `<select>` com as linhas existentes. |
 | `kyrux:"fklabel:coluna"` | Só afeta o admin — coluna de `tabela` (do `fk:`) usada como rótulo no `<select>`. Sem isso, mostra o id. |
@@ -1700,7 +1704,22 @@ user := &auth.User{Username: "joao", Email: nil}
 
 ### Autenticação SSR (sessão + cookie)
 
-Indicada para views HTML renderizadas no servidor. O campo de login é determinado pela tag `kyrux:"login"` no model `auth.User` — por padrão `username`. Alterar esse campo após o primeiro migrate equivale a uma mudança de schema e exige nova migration.
+Indicada para views HTML renderizadas no servidor. O campo de login é escolhido por projeto no `.env`:
+
+```bash
+AUTH_LOGIN_FIELD=username   # padrão; ou: email
+```
+
+| | `username` | `email` |
+|---|---|---|
+| `auth.Login` busca por | coluna `username`, exatamente como digitado | coluna `email`, sem diferenciar maiúsculas e ignorando espaços nas pontas |
+| Admin | campo "Usuário" | campo "E-mail" (`type="email"`) |
+| `ADMIN_SUPERUSER_USERNAME` e `createsuperuser` | gravam o usuário | gravam o e-mail (recusam valor sem `@`) e repetem-no em `username` quando ele não é informado |
+
+- Sem a variável, vale a tag `kyrux:"login"` do model `auth.User`, que por padrão é `username`. Projetos existentes não mudam de comportamento.
+- Valor diferente de `username` ou `email` impede o boot, com mensagem de erro.
+- As duas colunas já existem na tabela `users`, então a escolha **não exige migration**. Ao trocar num projeto em uso, todas as contas precisam ter o campo escolhido preenchido: quem não tiver não consegue entrar.
+- Seus formulários de login precisam acompanhar a escolha (`type="text"` para usuário): um `type="email"` faz o navegador recusar um nome de usuário antes de enviar. Use `auth.LoginFieldName()` se o formulário tiver de se adaptar.
 
 #### Login
 
@@ -1713,7 +1732,7 @@ func LoginView(ctx *router.Context) {
         return
     }
 
-    // Use o nome do campo de login definido no model (tag kyrux:"login")
+    // Use o valor do campo de login em uso (AUTH_LOGIN_FIELD no .env)
     loginValue := ctx.Request.FormValue(strings.ToLower(auth.LoginFieldName()))
     password   := ctx.Request.FormValue("password")
 
@@ -2262,10 +2281,10 @@ ADMIN_SUPERUSER_USERNAME=admin
 ADMIN_SUPERUSER_PASSWORD=troque-esta-senha-provisoria
 ```
 
-- O valor de `ADMIN_SUPERUSER_USERNAME` é gravado no campo marcado com
-  `kyrux:"login"` no model `auth.User` — `Username` ou `Email`, conforme a
-  tag (ver [seção 15](#15-autenticação)). O nome da variável não muda mesmo
-  quando o campo de login é `Email`.
+- O valor de `ADMIN_SUPERUSER_USERNAME` é gravado no campo de login em uso
+  (`AUTH_LOGIN_FIELD`, ver [autenticação](#15-autenticação)). O nome da variável não muda
+  mesmo quando o login é por e-mail; nesse caso o valor precisa ser um e-mail e
+  é gravado também em `Username`.
 - **Nunca redefine a senha de uma conta já existente** — mesmo que você
   edite `ADMIN_SUPERUSER_PASSWORD` depois e reinicie o servidor (Air
   recompila e reinicia a cada save; sem essa proteção, um `.env` esquecido
@@ -3509,7 +3528,7 @@ orm.FromDB[T](db).All()  // → SELECT * FROM tenant_abc.tabela
 | `kyrux:"default:valor"` | Valor SQL literal no INSERT se campo for zero Go |
 | `kyrux:"hash"` | Hash Argon2id+pepper automático na escrita; nunca revertido |
 | `kyrux:"encrypt"` | AES-256-GCM: cifra na escrita, decifra na leitura |
-| `kyrux:"login"` | Exclusivo do `auth.User` — define o campo de login; imutável após migrate |
+| `kyrux:"login"` | Exclusivo do `auth.User` — campo de login padrão; `AUTH_LOGIN_FIELD` no `.env` tem prioridade |
 | `kyrux:"autonow"` | `CURRENT_TIMESTAMP` automático em todo Update; preenche no Create se zerado |
 | `kyrux:"fk:tabela"` | `REFERENCES tabela(id)` + índice na migration; vira `<select>` no admin |
 | `kyrux:"fklabel:coluna"` | Rótulo do `<select>` de FK no admin (padrão: o id) |
@@ -3524,7 +3543,7 @@ user.SetPassword("senha")          // hash Argon2id + pepper
 user.CheckPassword("senha")        // bool
 user.FullName()                    // "Nome Sobrenome"
 
-// Campo de login (determinado pela tag kyrux:"login" no model User)
+// Campo de login em uso (AUTH_LOGIN_FIELD no .env; sem ele, a tag kyrux:"login")
 auth.LoginFieldName()                              // string — "Username" ou "Email"
 
 // SSR (sessão)

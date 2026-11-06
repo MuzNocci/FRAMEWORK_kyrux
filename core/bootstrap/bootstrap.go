@@ -167,6 +167,9 @@ func Init(envPath string) (*Framework, error) {
 	}
 
 	auth.SetDBEnabled(orm.HasConnections())
+	if err := auth.SetLoginField(cfg.Security.LoginField); err != nil {
+		log.Fatalf("bootstrap: %v", err)
+	}
 
 	f := &Framework{
 		Settings: cfg,

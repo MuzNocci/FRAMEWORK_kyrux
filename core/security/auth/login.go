@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"kyrux/core/database"
 	"kyrux/core/orm"
 	"kyrux/core/security/crypton"
@@ -30,8 +31,9 @@ func IsDBEnabled() bool { return dbEnabled }
 
 // loginColumn é a coluna SQL usada para buscar o usuário no Login.
 // loginFieldName é o nome do campo Go (ex: "Username", "Email") marcado com login.
-// Ambos são derivados das tags kyrux do struct User na inicialização do pacote.
-// Não há configuração de runtime — alterar exige mudança no model + nova migration.
+// O padrão vem da tag kyrux:"login" do struct User; AUTH_LOGIN_FIELD no .env tem
+// prioridade (ver SetLoginField). As duas colunas já existem na tabela users, então
+// a escolha não exige migration — só que as contas tenham o campo escolhido preenchido.
 var (
 	loginColumn    = detectLoginColumn()
 	loginFieldName = detectLoginFieldName()
@@ -40,6 +42,42 @@ var (
 // LoginFieldName retorna o nome do campo Go (não a coluna SQL) marcado com login no model User.
 // Usado pelo CLI para determinar qual campo é obrigatório na criação de usuários.
 func LoginFieldName() string { return loginFieldName }
+
+// SetLoginField escolhe o campo usado para entrar: "username" ou "email"
+// (AUTH_LOGIN_FIELD no .env). Vazio mantém o padrão da tag kyrux:"login".
+// Chamado uma vez no boot (bootstrap e CLI), antes de qualquer request.
+func SetLoginField(field string) error {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "":
+	case "username":
+		loginColumn, loginFieldName = "username", "Username"
+	case "email":
+		loginColumn, loginFieldName = "email", "Email"
+	default:
+		return fmt.Errorf("AUTH_LOGIN_FIELD=%q inválido — use username ou email", field)
+	}
+	return nil
+}
+
+// loginByEmail informa se o login em uso é por e-mail.
+func loginByEmail() bool { return loginFieldName == "Email" }
+
+// normalizeLogin padroniza o valor digitado: e-mail não diferencia maiúsculas
+// nem espaços nas pontas; username é comparado exatamente como foi digitado.
+func normalizeLogin(value string) string {
+	if loginByEmail() {
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+	return value
+}
+
+// loginWhere devolve o filtro SQL que localiza a conta pelo valor já normalizado.
+func loginWhere() string {
+	if loginByEmail() {
+		return "LOWER(" + loginColumn + ") = ?"
+	}
+	return loginColumn + " = ?"
+}
 
 func detectLoginFieldName() string {
 	t := reflect.TypeOf(User{})
@@ -139,12 +177,13 @@ func Login(db *database.DB, store *session.Store, w http.ResponseWriter, r *http
 
 	// Freio de brute-force por conta+IP: bloqueia após N falhas na janela,
 	// mesmo sem o middleware RateLimit na rota (defesa em profundidade).
+	loginValue = normalizeLogin(loginValue)
 	throttleKey := loginValue + "|" + loginClientIP(r)
 	if throttle.blocked(throttleKey) {
 		return nil, ErrTooManyAttempts
 	}
 
-	user, err := orm.FromDB[User](db).Where(loginColumn+" = ?", loginValue).First()
+	user, err := orm.FromDB[User](db).Where(loginWhere(), loginValue).First()
 	if err != nil {
 		equalizeTiming(password)
 		throttle.fail(throttleKey)

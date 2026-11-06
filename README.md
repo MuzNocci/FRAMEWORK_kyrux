@@ -53,7 +53,7 @@ Sessões em memória com TTL, GC automático, cookie `HttpOnly + SameSite=Strict
 
 ### Security / Auth
 Model `auth.User` com hash Argon2id+pepper, Login/Logout por sessão, JWT para APIs.
-Campo de login definido via tag `kyrux:"login"` no model — imutável após o primeiro migrate.
+Campo de login escolhido no `.env`: `AUTH_LOGIN_FIELD=username` (padrão) ou `email`; sem a variável, vale a tag `kyrux:"login"` do model.
 `Email *string` — opcional quando não é o campo de login; permite `NULL` sem violar índice `UNIQUE`.
 
 ### Security / Crypton

@@ -103,6 +103,7 @@ type SecuritySettings struct {
 	AllowedHost   []string
 	Pepper        string
 	EncryptionKey string
+	LoginField    string // AUTH_LOGIN_FIELD: username | email; vazio = tag kyrux:"login"
 	TrustedProxy  string // header de IP real do cliente (ex: X-Forwarded-For); vazio = sem proxy
 	CSPPolicy     string // Content-Security-Policy padrão; vazio = usa secmiddleware.DefaultCSP
 }
@@ -207,6 +208,7 @@ func Load() *Settings {
 			AllowedHost:   parseHosts(environment.Get("ALLOWED_HOSTS")),
 			Pepper:        environment.Get("PASSWORD_PEPPER"),
 			EncryptionKey: environment.Get("FIELD_ENCRYPTION_KEY"),
+			LoginField:    environment.Get("AUTH_LOGIN_FIELD"),
 			TrustedProxy:  environment.Get("TRUSTED_PROXY_HEADER"),
 			CSPPolicy:     environment.Get("CSP_POLICY"),
 		},
