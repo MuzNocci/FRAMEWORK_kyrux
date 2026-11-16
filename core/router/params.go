@@ -55,9 +55,23 @@ func displayPath(path string) string {
 	return path
 }
 
+// semHost tira o domínio de um caminho com host ("site.com/rota/" → "/rota/").
+// Sem "/" depois do domínio, não sobra caminho e devolve "".
+func semHost(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+	if i := strings.Index(path, "/"); i >= 0 {
+		return path[i:]
+	}
+	return ""
+}
+
 // slashAlternate retorna a variante complementar do padrão (com/sem barra final),
 // permitindo que /rota e /rota/ sejam tratados pelo mesmo handler.
 // Retorna "" quando não há alternativa válida (root "/", wildcards "...").
+// Padrões com domínio ("GET site.com/rota/") seguem a mesma regra, olhando
+// só o caminho: a raiz de um domínio não tem variante sem barra.
 func slashAlternate(pattern string) string {
 	if strings.Contains(pattern, "...}") {
 		return ""
@@ -66,15 +80,16 @@ func slashAlternate(pattern string) string {
 		alt := strings.TrimSuffix(pattern, "/{$}")
 		// Garante que sobra um path válido após remover "/{$}".
 		// Ex: "GET /{$}" → alt="GET " → path="" → inválido, retorna "".
+		// Ex: "GET site.com/{$}" → alt="GET site.com" → sem caminho, retorna "".
 		_, path, _ := strings.Cut(alt, " ")
-		if path == "" {
+		if semHost(path) == "" {
 			return ""
 		}
 		return alt
 	}
 	// Não gera alternativa para a raiz "/" (já coberta pelo caso acima).
 	_, path, _ := strings.Cut(pattern, " ")
-	if path == "/" {
+	if semHost(path) == "/" {
 		return ""
 	}
 	return pattern + "/{$}"

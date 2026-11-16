@@ -33,7 +33,8 @@ func Include(r *Router, patterns []URLPattern) {
 	for _, p := range patterns {
 		r.Handle(p.Method+" "+p.Path, p.View)
 		if p.Name != "" {
-			urlRegistry[p.Name] = displayPath(convertPattern(p.Path))
+			// Rota com domínio ("site.com/rota/"): o url devolve só o caminho.
+			urlRegistry[p.Name] = displayPath(semHost(convertPattern(p.Path)))
 		}
 	}
 	registryMu.Unlock()
