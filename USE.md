@@ -342,6 +342,24 @@ O Kyrux aceita a rota **com e sem barra** automaticamente:
 
 Não é necessário registrar as duas variantes.
 
+### Rotas por domínio
+
+Um mesmo projeto pode atender mais de um domínio. Coloque o domínio na frente
+do caminho; para esse domínio, a rota tem prioridade sobre a genérica:
+
+```go
+router.Include(r, []router.URLPattern{
+    router.Path("GET", "/", views.Inicio, "inicio"),                                   // qualquer domínio
+    router.Path("GET", "interno.exemplo.com/", views.InternoInicio, "interno_inicio"), // só interno.exemplo.com
+    router.Path("GET", "interno.exemplo.com/entrar/", views.Entrar, "interno_entrar"),
+})
+```
+
+- A barra final funciona igual (`/entrar` e `/entrar/`); a raiz do domínio não tem variante sem barra.
+- `{{ url "interno_entrar" }}` devolve só o caminho (`/entrar/`), sem o domínio: use-o em links dentro do próprio domínio.
+- Rotas genéricas continuam respondendo nesse domínio. Para bloquear o site principal nele, verifique o host na view ou em um middleware.
+- O domínio precisa estar em `ALLOWED_HOSTS`.
+
 ### Query string
 
 Parâmetros de query (`?chave=valor`) funcionam em qualquer rota:
